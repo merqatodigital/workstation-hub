@@ -32,7 +32,7 @@ COOLIFY_TOKEN = os.environ.get("COOLIFY_TOKEN", "").strip()
 SKIP_SUFFIXES = ("rsend.", "send.", "_domainkey", "resend.")
 
 _lock = threading.Lock()
-_cache = {"at": 0, "data": None}
+_cache = {"at": 0, "data": None, "building": False}
 
 
 def http_json(url, headers=None, timeout=8):
@@ -80,16 +80,22 @@ def cloudflare_data():
 
 
 # ------------------------------------------------------------------- probes
+PROBE_TIMEOUT = int(os.environ.get("PROBE_TIMEOUT", "20"))
+
+
 def probe(host):
     url = "https://" + host
     start = time.time()
     code = 0
+    timed_out = False
     try:
         req = urllib.request.Request(url, method="GET", headers={"User-Agent": "merqato-hub/1.0"})
-        with urllib.request.urlopen(req, timeout=8) as r:
+        with urllib.request.urlopen(req, timeout=PROBE_TIMEOUT) as r:
             code = r.status
     except urllib.error.HTTPError as e:
         code = e.code
+    except (socket.timeout, TimeoutError):
+        timed_out = True
     except Exception:  # noqa: BLE001
         code = 0
     ms = int((time.time() - start) * 1000)
@@ -98,6 +104,9 @@ def probe(host):
         "code": code,
         "ok": 100 <= code < 500,  # 5xx / no response = failing
         "ms": ms,
+        # Slow-but-alive hosts are flagged separately so the tile can show
+        # "slow" instead of counting them as down.
+        "slow": bool(timed_out or ms >= PROBE_TIMEOUT * 1000 * 0.8),
     }
 
 
@@ -222,6 +231,7 @@ def build():
     probes = probe_all(hosts) if hosts else []
 
     failing = [p for p in probes if not p["ok"]]
+    slow = [p["host"] for p in probes if p["ok"] and p["slow"]]
 
     certs = {}
     for p in probes[:12]:
@@ -243,6 +253,8 @@ def build():
             "failing": len(failing),
             "failing_names": ", ".join(p["host"] for p in failing)[:120] or "none",
             "slowest_ms": max([p["ms"] for p in probes], default=0),
+            "slow_count": len(slow),
+            "slow_names": ", ".join(slow)[:120] or "none",
         },
         "certificates": {
             "checked": len(certs),
@@ -262,15 +274,70 @@ def build():
     }
 
 
-def cached():
-    with _lock:
-        if _cache["data"] and (time.time() - _cache["at"]) < CACHE_TTL:
-            return _cache["data"]
-    data = build()
+def _rebuild():
+    """Refresh the cache in place. Safe to run from a background thread."""
+    try:
+        data = build()
+    except Exception as exc:  # noqa: BLE001
+        with _lock:
+            if _cache["data"]:
+                _cache["data"]["last_error"] = str(exc)[:160]
+                _cache["at"] = time.time()  # back off briefly, keep serving stale
+        return
     with _lock:
         _cache["data"] = data
         _cache["at"] = time.time()
-    return data
+
+
+def _rebuild_after():
+    try:
+        _rebuild()
+    finally:
+        with _lock:
+            _cache["building"] = False
+
+
+def cached():
+    """Never block a request on a full rebuild.
+
+    A cold or stale cache returns whatever we have (possibly nothing on the very
+    first call) and refreshes in the background, so dashboard tiles always answer
+    in milliseconds instead of waiting on 18 outbound HTTPS probes.
+    """
+    with _lock:
+        data = _cache["data"]
+        fresh = data is not None and (time.time() - _cache["at"]) < CACHE_TTL
+        stale = data is None or (time.time() - _cache["at"]) >= CACHE_TTL
+        rebuilding = _cache["building"]
+        if stale and not rebuilding:
+            _cache["building"] = True
+            start_build = True
+        else:
+            start_build = False
+
+    if start_build:
+        threading.Thread(target=_rebuild_after, args=(), daemon=True).start()
+
+    if fresh:
+        return data
+
+    # Stale or empty: wait briefly for the first build so the very first hit
+    # still returns real data, then serve whatever exists.
+    deadline = time.time() + float(os.environ.get("FIRST_BUILD_WAIT", "25"))
+    while time.time() < deadline:
+        with _lock:
+            data = _cache["data"]
+            if data is not None and (time.time() - _cache["at"]) < CACHE_TTL:
+                return data
+        time.sleep(0.4)
+
+    with _lock:
+        data = _cache["data"]
+    if data is not None:
+        data = dict(data)
+        data["stale"] = True
+        return data
+    return {"stale": True, "error": "cache warming", "updated": None}
 
 
 # ---------------------------------------------------------------------- http
@@ -299,6 +366,7 @@ class Handler(BaseHTTPRequestHandler):
                     "domains_ok": data["domains"]["ok"],
                     "domains_failing": data["domains"]["failing"],
                     "failing_names": data["domains"]["failing_names"],
+                    "slow_count": data["domains"].get("slow_count", 0),
                     "containers_running": data["docker"]["running"],
                     "containers_healthy": data["docker"]["healthy"],
                     "containers_unhealthy": data["docker"]["unhealthy"],
@@ -348,4 +416,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print("hub api listening on :%d (ttl=%ds)" % (PORT, CACHE_TTL), flush=True)
+    # Build once at startup so the first visitor gets a warm cache instead of
+    # waiting on a full probe cycle.
+    threading.Thread(target=_rebuild_after, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

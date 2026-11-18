@@ -1,11 +1,29 @@
 # MerQato Workstation — Operations
 
-Canonical URL: **https://work.merqato.digital**
-Legacy hostnames `dash.` and `home.merqato.digital` 301-redirect to `work.`
+Canonical URL: **https://home.merqato.digital** (password prompt)
+Secondary: `https://work.merqato.digital` (Cloudflare Access SSO / email OTP)
+`dash.merqato.digital` 301-redirects to `home.`
 
 ## Access control
 
-Authentication is enforced at the edge by **Cloudflare Access**, not by the app.
+Two doors into the same dashboard:
+
+| Host | Auth | Use it when |
+| --- | --- | --- |
+| `home.merqato.digital` | Caddy `basic_auth` (browser prompt) | daily use — one prompt, then cached for the session |
+| `work.merqato.digital` | Cloudflare Access, app `MerQato Workstation` | you want SSO / one-time PIN instead of a password |
+
+Credentials for `home` live in `/opt/homepage/auth.txt` (chmod 600):
+
+```
+user: david
+pass: <in /opt/homepage/auth.txt>
+```
+
+The password prompt covers the whole origin, so Homepage's widget XHRs are
+authenticated by the same cached browser credentials — no "API Error" tiles.
+
+### Cloudflare Access details (work host)
 
 | Item | Value |
 | --- | --- |
@@ -14,14 +32,10 @@ Authentication is enforced at the edge by **Cloudflare Access**, not by the app.
 | Destination | `work.merqato.digital` |
 | Policy | `Owners` — Allow, Include → Emails |
 | Allowed emails | david@merqato.digital, david@palawancollective.com, growpalawan@gmail.com |
-| Login method | One-time PIN (email) + Cloudflare SSO |
+| Login method | Cloudflare SSO + email one-time PIN |
 
-Unauthenticated requests get `302` to the Access login page. Nothing on this
-host is protected by app-level passwords any more — the interim Caddy
-`basic_auth` block was removed after Access was verified.
-
-To add a person: Zero Trust → Access controls → Applications → `MerQato
-Workstation` → `Owners` → add the email to the Include rule.
+If Access ever feels slow, use `home` — it never touches Cloudflare's edge
+login flow.
 
 ## Services (docker compose, /opt/homepage/docker-compose.yml)
 
@@ -35,11 +49,17 @@ Workstation` → `Owners` → add the email to the Include rule.
 `social-caddy-1` (in `/opt/social`) terminates TLS and routes:
 
 ```
-work.merqato.digital
+home.merqato.digital   (basic_auth)
   /files/*  -> host.docker.internal:3004
   /hub/*    -> host.docker.internal:3010
   *         -> host.docker.internal:3003
-dash/home   -> 301 https://work.merqato.digital{uri}
+
+work.merqato.digital   (Cloudflare Access at the edge)
+  /files/*  -> host.docker.internal:3004
+  /hub/*    -> host.docker.internal:3010
+  *         -> host.docker.internal:3003
+
+dash.merqato.digital -> 301 https://home.merqato.digital{uri}
 ```
 
 The Caddyfile is bind-mounted from `/opt/social/Caddyfile`. Edit it in place
@@ -64,8 +84,11 @@ docker exec social-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 | `/vps.json` | UpCloud instance metadata + live host resources |
 | `/full.json` | everything |
 
-Responses are cached 60s (`CACHE_TTL`). No secret is ever returned; the
-Cloudflare and Coolify tokens live only in `/opt/homepage/.env` (chmod 600).
+Responses are cached 60s and refreshed in a background thread, so a request
+never waits on a full rebuild. The first build also runs at container start, so
+the first visitor already gets a warm cache (sub-millisecond responses). No
+secret is ever returned; the Cloudflare and Coolify tokens live only in
+`/opt/homepage/.env` (chmod 600).
 
 ## Data sources
 
@@ -86,10 +109,10 @@ VPS metrics are produced by `/opt/homepage/vps-agent.sh` every minute into
 `/opt/homepage/hub/vps.json` (root crontab). It reads the UpCloud metadata
 service, `/proc/meminfo`, `/proc/loadavg` and `df`. No API key required.
 
-## Site Health
+## Known failing hosts
 
-Probes every public hostname in the Cloudflare zone (15s timeout, follows
-redirects). Currently **15 up / 3 failing** — the failing ones are genuine:
+`Site Health` probes every public hostname in the Cloudflare zone (15s timeout,
+follows redirects). Currently **15 up / 3 failing** — the failing ones are real:
 
 | Host | Symptom |
 | --- | --- |
@@ -97,9 +120,8 @@ redirects). Currently **15 up / 3 failing** — the failing ones are genuine:
 | `susi.merqato.digital` | no TLS certificate / no DNS answer |
 | `www.status.merqato.digital` | no such host |
 
-Fix the service and the tile turns green on its own. Sites that respond slower
-than ~12s are counted as *slow*, not *down* — several Hostinger/Vercel hosts
-sit at 3–15s, which is why the timeout is 15s rather than the 8s default.
+Sites that answer slower than ~12s are reported as *slow* rather than *down*.
+Several Hostinger/Vercel hosts take 3–15s, which is why the timeout is 15s.
 
 ## Automation agent identity
 
@@ -150,8 +172,9 @@ cd /opt/homepage && docker compose restart hubapi
 ## Verification
 
 ```
-curl -s -o /dev/null -w '%{http_code}\n' https://work.merqato.digital      # 302 -> Access
-curl -sk -o /dev/null -w '%{http_code}\n' --resolve work.merqato.digital:443:127.0.0.1 https://work.merqato.digital/   # 200 origin
-curl -s http://127.0.0.1:3010/summary.json                                  # live numbers
+curl -s -o /dev/null -w '%{http_code}\n' https://home.merqato.digital                      # 401
+curl -s -o /dev/null -w '%{http_code}\n' -u david:$PW https://home.merqato.digital        # 200
+curl -s -o /dev/null -w '%{http_code}\n' -u david:$PW https://home.merqato.digital/hub/summary.json
+curl -s -o /dev/null -w '%{http_code}\n' https://work.merqato.digital                     # 302 -> Access
 curl -s -o /dev/null -w '%{http_code}\n' https://status.merqato.digital/api/status-page/merqato   # 200
 ```
