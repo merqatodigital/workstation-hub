@@ -1,0 +1,6 @@
+---
+# Read-only proxy in front of /var/run/docker.sock (see docker-compose.yml).
+# Only CONTAINERS + VERSION + INFO are enabled; no write/exec endpoints.
+local:
+  host: dockerproxy
+  port: 2375

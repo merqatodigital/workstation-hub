@@ -3,13 +3,63 @@ services:
     image: ghcr.io/gethomepage/homepage:latest
     container_name: homepage
     environment:
-      # Hostnames the dashboard is allowed to answer on (comma separated, no spaces)
-      HOMEPAGE_ALLOWED_HOSTS: dash.merqato.digital,work.merqato.digital,home.merqato.digital
+      HOMEPAGE_ALLOWED_HOSTS: work.example.com
     volumes:
       - ./config:/app/config
-      # Read-only Docker socket enables the container/service status widgets.
-      # Drop this line if the host is not trusted.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "3003:3000"
+    restart: unless-stopped
+
+  # Read-only Docker API. Only CONTAINERS + VERSION + INFO are exposed;
+  # no write, exec or start/stop endpoints. The socket is mounted :ro.
+  dockerproxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: dockerproxy
+    environment:
+      CONTAINERS: 1
+      INFO: 1
+      VERSION: 1
+      NETWORKS: 0
+      IMAGES: 0
+      VOLUMES: 0
+      EXEC: 0
+      POST: 0
+      ALLOW_START: 0
+      ALLOW_STOP: 0
+      ALLOW_RESTARTS: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose:
+      - "2375"
+    restart: unless-stopped
+
+  # Aggregation API for widgets Homepage has no native support for
+  # (Cloudflare, GitHub, Coolify, UpCloud).
+  hubapi:
+    image: python:3.12-alpine
+    container_name: hubapi
+    command: ["python", "-u", "/app/hub.py"]
+    volumes:
+      - ./hub:/app:ro
+    environment:
+      CF_API_TOKEN: ${CF_API_TOKEN}
+      GITHUB_ACCOUNTS: ${GITHUB_ACCOUNTS:-merqatodigital,sanvicpalawan}
+      COOLIFY_URL: ${COOLIFY_URL}
+      COOLIFY_TOKEN: ${COOLIFY_TOKEN}
+      CACHE_TTL: ${CACHE_TTL:-60}
+      DOCKER_API: http://dockerproxy:2375
+    ports:
+      - "3010:3010"
+    depends_on:
+      - dockerproxy
+    restart: unless-stopped
+
+  # Static file downloads (e.g. the partner zip)
+  files:
+    image: nginx:alpine
+    container_name: hub-files
+    volumes:
+      - ./static:/usr/share/nginx/html:ro
+    ports:
+      - "3004:80"
     restart: unless-stopped

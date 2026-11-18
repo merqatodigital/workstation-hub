@@ -3,38 +3,150 @@
         href: https://coolify.merqato.digital
         description: Deploy & control panel
         icon: coolify
+        widget:
+          type: customapi
+          url: http://hubapi:3010/summary.json
+          refreshInterval: 60000
+          mappings:
+            - field: coolify_apps
+              label: Apps
+            - field: coolify_projects
+              label: Projects
+            - field: coolify_reachable
+              label: Servers up
+            - field: coolify_version
+              label: Version
     - HyperLevel CRM:
         href: https://crm.merqato.digital
         description: Business OS
         icon: hyperlevel
+        widget:
+          type: docker
+          container: hyperlevel-gohigh-1
+          server: local
     - Uptime Kuma:
         href: https://status.merqato.digital
-        description: Uptime monitor
+        description: Uptime monitor, 10 checks
         icon: uptime-kuma
+        widget:
+          type: docker
+          container: uptime-kuma
+          server: local
     - MerQato Social:
         href: https://social.merqato.digital
         description: Django social app
         icon: django
+        widget:
+          type: docker
+          container: social-app-1
+          server: local
+    - Edge Proxy:
+        href: https://work.merqato.digital
+        description: Caddy, TLS + routes for merqato.digital
+        icon: caddy
+        widget:
+          type: docker
+          container: social-caddy-1
+          server: local
+    - Homepage:
+        href: https://work.merqato.digital
+        description: This dashboard
+        icon: homepage
+        widget:
+          type: docker
+          container: homepage
+          server: local
     - Cloudflare:
-        href: https://dash.cloudflare.com
-        description: DNS, email routing, tunnels
+        href: https://dash.cloudflare.com/4322261acf290539b992fbd803039ca7
+        description: DNS, Access, email routing
         icon: cloudflare
+        widget:
+          type: customapi
+          url: http://hubapi:3010/summary.json
+          refreshInterval: 60000
+          mappings:
+            - field: cf_zones
+              label: Zones
+            - field: cf_dns_records
+              label: DNS records
+            - field: cert_min_days
+              label: Cert days
+    - GitHub:
+        href: https://github.com/merqatodigital
+        description: 3 accounts · merqatodigital, sanvicpalawan, merqato
+        icon: github
+        widget:
+          type: customapi
+          url: http://hubapi:3010/summary.json
+          refreshInterval: 60000
+          mappings:
+            - field: github_repos
+              label: Public repos
     - Vercel:
         href: https://vercel.com
-        description: Site hosting (8 active)
+        description: Site hosting
         icon: vercel
-    - GitHub:
-        href: https://github.com
-        description: 3 accounts, 49 repos
-        icon: github
     - Resend:
         href: https://resend.com
         description: Email sending
         icon: resend
     - UpCloud:
-        href: https://hub.upcloud.com
-        description: VPS (trial, 25 days)
+        href: https://hub.upcloud.com/dashboard
+        description: VPS 95.111.196.120 · sg-sin1
         icon: upcloud
+        widget:
+          type: customapi
+          url: http://hubapi:3010/summary.json
+          refreshInterval: 60000
+          mappings:
+            - field: vps_cpu_pct
+              label: CPU %
+            - field: vps_mem_pct
+              label: MEM %
+            - field: vps_disk_pct
+              label: Disk %
+            - field: vps_uptime_h
+              label: Uptime h
+
+- Service Status:
+    - MerQato Status Page:
+        href: https://status.merqato.digital/status/merqato
+        description: Live up / down / uptime
+        icon: uptime-kuma
+        widget:
+          type: uptimekuma
+          url: https://status.merqato.digital
+          slug: merqato
+    - Site Health:
+        href: https://work.merqato.digital/hub/domains.json
+        description: HTTPS probe of every public host
+        icon: cloudflare
+        widget:
+          type: customapi
+          url: http://hubapi:3010/summary.json
+          refreshInterval: 60000
+          mappings:
+            - field: domains_ok
+              label: Sites up
+            - field: domains_failing
+              label: Failing
+            - field: failing_names
+              label: Down now
+    - Docker Host:
+        href: https://work.merqato.digital/hub/docker.json
+        description: Container fleet, read-only proxy
+        icon: docker
+        widget:
+          type: customapi
+          url: http://hubapi:3010/summary.json
+          refreshInterval: 60000
+          mappings:
+            - field: containers_running
+              label: Running
+            - field: containers_healthy
+              label: Healthy
+            - field: containers_unhealthy
+              label: Unhealthy
 
 - Email & Comms:
     - Gmail:
@@ -55,6 +167,14 @@
         icon: cloudflare
 
 - Projects:
+    - Project Inventory:
+        href: https://projects-omega-neon.vercel.app/admin
+        description: Code inventory admin (login required)
+        icon: vercel
+    - Project Inventory Repo:
+        href: https://github.com/merqatodigital/projects
+        description: GitHub dashboard with Vercel URLs
+        icon: github
     - Amates Solutions:
         href: https://amatessolutions-automation.vercel.app
         description: Live client site
@@ -85,7 +205,7 @@
         icon: vercel
     - Repository Intelligence:
         href: https://git.merqato.digital
-        description: Repo intelligence tool
+        description: Repo intelligence tool (Vercel)
         icon: github
     - SBI Medical Deck:
         href: https://presentation.merqato.digital
