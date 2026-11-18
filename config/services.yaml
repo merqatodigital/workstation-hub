@@ -73,15 +73,17 @@
               label: Cert days
     - GitHub:
         href: https://github.com/merqatodigital
-        description: 3 accounts · merqatodigital, sanvicpalawan, merqato
+        description: merqatodigital · 46 repos incl. private
         icon: github
         widget:
           type: customapi
           url: http://hubapi:3010/summary.json
           refreshInterval: 60000
           mappings:
-            - field: github_repos
-              label: Public repos
+            - field: github_visible_repos
+              label: Repos
+            - field: github_private_repos
+              label: Private
     - Vercel:
         href: https://vercel.com
         description: Site hosting
@@ -171,6 +173,17 @@
         href: https://projects-omega-neon.vercel.app/admin
         description: Code inventory admin (login required)
         icon: vercel
+        widget:
+          type: customapi
+          url: http://hubapi:3010/summary.json
+          refreshInterval: 300000
+          mappings:
+            - field: inv_repositories
+              label: Repos
+            - field: inv_vercel_projects
+              label: Vercel
+            - field: inv_deploy_errors
+              label: Deploy err
     - Project Inventory Repo:
         href: https://github.com/merqatodigital/projects
         description: GitHub dashboard with Vercel URLs

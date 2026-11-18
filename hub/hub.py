@@ -14,12 +14,14 @@ import socket
 import ssl
 import threading
 import time
+import base64
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("HUB_PORT", "3010"))
+BUILD_ID = os.environ.get("HUB_BUILD", "2026.11.19")
 CF_TOKEN = os.environ.get("CF_API_TOKEN", "").strip()
 DOCKER = os.environ.get("DOCKER_API", "http://dockerproxy:2375")
 GITHUB_ACCOUNTS = [a.strip() for a in os.environ.get("GITHUB_ACCOUNTS", "merqatodigital,sanvicpalawan,merqato").split(",") if a.strip()]
@@ -27,6 +29,7 @@ CACHE_TTL = int(os.environ.get("CACHE_TTL", "60"))
 VPS_FILE = os.environ.get("VPS_FILE", "/app/vps.json")
 COOLIFY_URL = os.environ.get("COOLIFY_URL", "https://coolify.merqato.digital").rstrip("/")
 COOLIFY_TOKEN = os.environ.get("COOLIFY_TOKEN", "").strip()
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 
 # Hosts that are infrastructure endpoints rather than customer-facing sites.
 SKIP_SUFFIXES = ("rsend.", "send.", "_domainkey", "resend.")
@@ -158,7 +161,8 @@ def docker_data():
 def github_data():
     accounts, total = [], 0
     for login in GITHUB_ACCOUNTS:
-        entry = {"login": login, "public_repos": None, "error": None}
+        entry = {"login": login, "public_repos": None, "private_repos": None,
+                 "total_repos": None, "error": None, "authenticated": False}
         try:
             u = http_json("https://api.github.com/users/" + login, timeout=8)
             entry["public_repos"] = u.get("public_repos", 0)
@@ -167,8 +171,35 @@ def github_data():
             total += entry["public_repos"] or 0
         except Exception as exc:  # noqa: BLE001
             entry["error"] = str(exc)[:80]
+
+        # Authenticated pass: only meaningful for the account the token owns.
+        if GITHUB_TOKEN:
+            hdr = {"Authorization": "Bearer " + GITHUB_TOKEN,
+                   "Accept": "application/vnd.github+json",
+                   "User-Agent": "merqato-hub/1.0"}
+            try:
+                me = http_json("https://api.github.com/user", headers=hdr, timeout=8)
+                if (me.get("login") or "").lower() == login.lower():
+                    repos = http_json(
+                        "https://api.github.com/user/repos?per_page=100"
+                        "&affiliation=owner,collaborator,organization_member",
+                        headers=hdr, timeout=12)
+                    priv = sum(1 for r in repos if r.get("private"))
+                    entry["authenticated"] = True
+                    entry["total_repos"] = len(repos)
+                    entry["private_repos"] = priv
+                    entry["visibility"] = "authenticated"
+            except Exception as exc:  # noqa: BLE001
+                entry["error"] = (entry["error"] or "") + " auth:" + str(exc)[:40]
         accounts.append(entry)
-    return {"accounts": accounts, "public_repos_total": total}
+    private_total = sum(a.get("private_repos") or 0 for a in accounts)
+    return {
+        "accounts": accounts,
+        "public_repos_total": total,
+        "private_repos_total": private_total,
+        "visible_repos_total": total + private_total,
+        "authenticated": bool(GITHUB_TOKEN),
+    }
 
 
 # ------------------------------------------------------------------------ vps
@@ -224,6 +255,40 @@ def coolify_data():
     return out
 
 
+# ----------------------------------------------------------------- inventory
+INVENTORY_REPO = os.environ.get("INVENTORY_REPO", "merqatodigital/projects")
+
+
+def inventory_data():
+    """Summary of the existing Projects inventory snapshot (read-only)."""
+    out = {"ok": False, "error": None, "captured": None}
+    if not GITHUB_TOKEN:
+        out["error"] = "no token"
+        return out
+    try:
+        hdr = {"Authorization": "Bearer " + GITHUB_TOKEN,
+               "Accept": "application/vnd.github+json",
+               "User-Agent": "merqato-hub/1.0"}
+        meta = http_json(
+            "https://api.github.com/repos/%s/contents/inventory.json" % INVENTORY_REPO,
+            headers=hdr, timeout=10)
+        raw = base64.b64decode(meta["content"]).decode("utf-8", "replace")
+        data = json.loads(raw)
+        summary = data.get("summary") or {}
+        out.update({
+            "ok": True,
+            "captured": data.get("capturedOn"),
+            "repositories": summary.get("repositories", 0),
+            "vercel_projects": summary.get("vercelProjects", 0),
+            "matched_deployments": summary.get("matchedDeploymentSources", 0),
+            "deployment_errors": summary.get("latestDeploymentErrors", 0),
+            "review_notes": len(data.get("reviewNotes") or []),
+        })
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = str(exc)[:120]
+    return out
+
+
 # --------------------------------------------------------------------- build
 def build():
     cfdata = cloudflare_data()
@@ -244,6 +309,7 @@ def build():
     gh = github_data()
     cld = coolify_data()
     vps = vps_data()
+    inv = inventory_data()
 
     return {
         "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -264,6 +330,7 @@ def build():
         "github": gh,
         "coolify": cld,
         "vps": vps,
+        "inventory": inv,
         "cloudflare": {
             "zones": cfdata["zones"],
             "dns_records": cfdata["dns_records"],
@@ -300,43 +367,36 @@ def _rebuild_after():
 def cached():
     """Never block a request on a full rebuild.
 
-    A cold or stale cache returns whatever we have (possibly nothing on the very
-    first call) and refreshes in the background, so dashboard tiles always answer
-    in milliseconds instead of waiting on 18 outbound HTTPS probes.
+    A cold or stale cache returns whatever we have immediately and refreshes in
+    the background, so dashboard tiles answer in milliseconds instead of waiting
+    on 18 outbound HTTPS probes. Only the very first request after startup waits,
+    and only because there is nothing to serve yet.
     """
     with _lock:
         data = _cache["data"]
         fresh = data is not None and (time.time() - _cache["at"]) < CACHE_TTL
-        stale = data is None or (time.time() - _cache["at"]) >= CACHE_TTL
-        rebuilding = _cache["building"]
-        if stale and not rebuilding:
-            _cache["building"] = True
-            start_build = True
-        else:
-            start_build = False
+        if fresh:
+            return data
+        if data is not None:
+            # Stale but usable: serve it now, refresh behind the scenes.
+            if not _cache["building"]:
+                _cache["building"] = True
+                threading.Thread(target=_rebuild_after, daemon=True).start()
+            out = dict(data)
+            out["stale"] = True
+            return out
 
-    if start_build:
-        threading.Thread(target=_rebuild_after, args=(), daemon=True).start()
-
-    if fresh:
-        return data
-
-    # Stale or empty: wait briefly for the first build so the very first hit
-    # still returns real data, then serve whatever exists.
+    # No data yet (first request after startup): wait briefly for the first build.
     deadline = time.time() + float(os.environ.get("FIRST_BUILD_WAIT", "25"))
     while time.time() < deadline:
         with _lock:
             data = _cache["data"]
-            if data is not None and (time.time() - _cache["at"]) < CACHE_TTL:
-                return data
+            if data is not None:
+                out = dict(data)
+                out["stale"] = False
+                return out
         time.sleep(0.4)
 
-    with _lock:
-        data = _cache["data"]
-    if data is not None:
-        data = dict(data)
-        data["stale"] = True
-        return data
     return {"stale": True, "error": "cache warming", "updated": None}
 
 
@@ -357,7 +417,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0].rstrip("/") or "/"
         try:
             if path in ("/", "/health"):
-                self._send({"status": "ok", "service": "merqato-hub"})
+                self._send({"status": "ok", "service": "merqato-hub", "build": BUILD_ID})
                 return
             data = cached()
             if path == "/summary.json":
@@ -372,6 +432,9 @@ class Handler(BaseHTTPRequestHandler):
                     "containers_unhealthy": data["docker"]["unhealthy"],
                     "containers_total": data["docker"]["total"],
                     "github_repos": data["github"]["public_repos_total"],
+                    "github_private_repos": data["github"]["private_repos_total"],
+                    "github_visible_repos": data["github"]["visible_repos_total"],
+                    "github_authenticated": data["github"]["authenticated"],
                     "cf_zones": data["cloudflare"]["zones"],
                     "cf_dns_records": data["cloudflare"]["dns_records"],
                     "cert_min_days": data["certificates"]["min_days"],
@@ -389,6 +452,10 @@ class Handler(BaseHTTPRequestHandler):
                     "vps_disk_pct": data["vps"].get("disk_used_pct", -1),
                     "vps_load1": data["vps"].get("load1", -1),
                     "vps_uptime_h": data["vps"].get("uptime_hours", -1),
+                    "inv_repositories": data["inventory"].get("repositories", 0),
+                    "inv_vercel_projects": data["inventory"].get("vercel_projects", 0),
+                    "inv_deploy_errors": data["inventory"].get("deployment_errors", 0),
+                    "inv_captured": data["inventory"].get("captured") or "n/a",
                     "updated": data["updated"],
                 })
             elif path == "/domains.json":
@@ -403,6 +470,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(data["coolify"])
             elif path == "/vps.json":
                 self._send(data["vps"])
+            elif path == "/inventory.json":
+                self._send(data["inventory"])
             elif path == "/full.json":
                 self._send(data)
             else:
