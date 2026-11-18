@@ -85,9 +85,20 @@
             - field: github_private_repos
               label: Private
     - Vercel:
-        href: https://vercel.com
-        description: Site hosting
+        href: https://vercel.com/merqatodigital
+        description: MerQato Digital team · projects & deploys
         icon: vercel
+        widget:
+          type: customapi
+          url: http://hubapi:3010/summary.json
+          refreshInterval: 120000
+          mappings:
+            - field: vc_projects
+              label: Projects
+            - field: vc_ready
+              label: Ready
+            - field: vc_errors
+              label: Errors
     - Resend:
         href: https://resend.com
         description: Email sending

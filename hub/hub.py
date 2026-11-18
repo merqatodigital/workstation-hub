@@ -255,6 +255,53 @@ def coolify_data():
     return out
 
 
+# -------------------------------------------------------------------- vercel
+VERCEL_TOKEN = os.environ.get("VERCEL_TOKEN", "").strip()
+
+
+def vercel_data():
+    """Projects, deployments and health from the Vercel REST API (read-only)."""
+    out = {"ok": False, "error": None, "team": None, "projects": 0,
+           "deployments": 0, "ready": 0, "errors": 0, "latest": []}
+    if not VERCEL_TOKEN:
+        out["error"] = "no token"
+        return out
+    hdr = {"Authorization": "Bearer " + VERCEL_TOKEN, "User-Agent": "merqato-hub/1.0"}
+    try:
+        teams = http_json("https://api.vercel.com/v2/teams?limit=20", headers=hdr, timeout=10)
+        if teams.get("teams"):
+            out["team"] = teams["teams"][0].get("slug")
+
+        projects = http_json("https://api.vercel.com/v9/projects?limit=100",
+                             headers=hdr, timeout=12)
+        plist = projects.get("projects") or []
+        out["projects"] = len(plist)
+        out["project_names"] = [p.get("name") for p in plist[:20]]
+
+        deps = http_json("https://api.vercel.com/v6/deployments?limit=20",
+                         headers=hdr, timeout=12)
+        dlist = deps.get("deployments") or []
+        out["deployments"] = len(dlist)
+        for d in dlist:
+            state = (d.get("state") or d.get("readyState") or "").upper()
+            if state in ("READY", "FINISHED"):
+                out["ready"] += 1
+            elif state in ("ERROR", "CANCELED"):
+                out["errors"] += 1
+            if d.get("target") == "production":
+                out["latest"].append({
+                    "name": d.get("name"),
+                    "url": "https://" + (d.get("url") or ""),
+                    "state": state,
+                    "created": d.get("createdAt"),
+                })
+        out["latest"] = out["latest"][:5]
+        out["ok"] = True
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = str(exc)[:120]
+    return out
+
+
 # ----------------------------------------------------------------- inventory
 INVENTORY_REPO = os.environ.get("INVENTORY_REPO", "merqatodigital/projects")
 
@@ -310,6 +357,7 @@ def build():
     cld = coolify_data()
     vps = vps_data()
     inv = inventory_data()
+    vc = vercel_data()
 
     return {
         "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -331,6 +379,7 @@ def build():
         "coolify": cld,
         "vps": vps,
         "inventory": inv,
+        "vercel": vc,
         "cloudflare": {
             "zones": cfdata["zones"],
             "dns_records": cfdata["dns_records"],
@@ -456,6 +505,11 @@ class Handler(BaseHTTPRequestHandler):
                     "inv_vercel_projects": data["inventory"].get("vercel_projects", 0),
                     "inv_deploy_errors": data["inventory"].get("deployment_errors", 0),
                     "inv_captured": data["inventory"].get("captured") or "n/a",
+                    "vc_team": data["vercel"].get("team") or "n/a",
+                    "vc_projects": data["vercel"].get("projects", 0),
+                    "vc_deployments": data["vercel"].get("deployments", 0),
+                    "vc_ready": data["vercel"].get("ready", 0),
+                    "vc_errors": data["vercel"].get("errors", 0),
                     "updated": data["updated"],
                 })
             elif path == "/domains.json":
@@ -472,6 +526,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(data["vps"])
             elif path == "/inventory.json":
                 self._send(data["inventory"])
+            elif path == "/vercel.json":
+                self._send(data["vercel"])
             elif path == "/full.json":
                 self._send(data)
             else:
