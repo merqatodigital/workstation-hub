@@ -257,6 +257,74 @@ def coolify_data():
 
 # -------------------------------------------------------------------- vercel
 VERCEL_TOKEN = os.environ.get("VERCEL_TOKEN", "").strip()
+RESEND_TOKEN = os.environ.get("RESEND_API_KEY", "").strip()
+ALERT_TO = os.environ.get("ALERT_TO", "david@merqato.digital").strip()
+ALERT_FROM = os.environ.get("ALERT_FROM", "MerQato Status <david@merqato.digital>").strip()
+ALERT_KEY = os.environ.get("ALERT_KEY", "").strip()
+
+
+def resend_data():
+    """Sending domains and recent delivery outcomes (read-only)."""
+    out = {"ok": False, "error": None, "domains": 0, "verified": 0,
+           "recent": 0, "delivered": 0, "bounced": 0, "failed": 0, "names": []}
+    if not RESEND_TOKEN:
+        out["error"] = "no token"
+        return out
+    hdr = {"Authorization": "Bearer " + RESEND_TOKEN, "User-Agent": "merqato-hub/1.0"}
+    try:
+        dom = http_json("https://api.resend.com/domains", headers=hdr, timeout=10)
+        items = dom.get("data") or []
+        out["domains"] = len(items)
+        out["verified"] = sum(1 for d in items if d.get("status") == "verified")
+        out["names"] = [d.get("name") for d in items][:6]
+
+        emails = http_json("https://api.resend.com/emails?limit=20", headers=hdr, timeout=10)
+        recent = emails.get("data") or []
+        out["recent"] = len(recent)
+        for e in recent:
+            ev = (e.get("last_event") or "").lower()
+            if ev in ("delivered", "opened", "clicked"):
+                out["delivered"] += 1
+            elif ev in ("bounced",):
+                out["bounced"] += 1
+            elif ev in ("failed", "delivery_delayed"):
+                out["failed"] += 1
+        out["ok"] = True
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = str(exc)[:120]
+    return out
+
+
+def send_alert(monitor, status, message):
+    """Email an outage/recovery notice through Resend."""
+    if not RESEND_TOKEN:
+        return False, "no resend key"
+    down = str(status).lower() in ("down", "0", "failed")
+    subject = ("🔴 DOWN: %s" if down else "✅ UP: %s") % monitor
+    body = ("%s is %s.\n\n%s\n\nTime: %s UTC\n"
+            % (monitor, "DOWN" if down else "back UP", message or "",
+               time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())))
+    payload = json.dumps({
+        "from": ALERT_FROM,
+        "to": [ALERT_TO],
+        "subject": subject,
+        "text": body,
+    }).encode()
+    try:
+        req = urllib.request.Request(
+            "https://api.resend.com/emails", data=payload, method="POST",
+            headers={"Authorization": "Bearer " + RESEND_TOKEN,
+                     "Content-Type": "application/json",
+                     "User-Agent": "merqato-hub/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status in (200, 201), "ok"
+    except urllib.error.HTTPError as e:
+        return False, "http %s" % e.code
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)[:80]
+
+
+# -------------------------------------------------------------------- vercel
 
 
 def vercel_data():
@@ -358,6 +426,7 @@ def build():
     vps = vps_data()
     inv = inventory_data()
     vc = vercel_data()
+    rs = resend_data()
 
     return {
         "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -380,6 +449,7 @@ def build():
         "vps": vps,
         "inventory": inv,
         "vercel": vc,
+        "resend": rs,
         "cloudflare": {
             "zones": cfdata["zones"],
             "dns_records": cfdata["dns_records"],
@@ -510,6 +580,11 @@ class Handler(BaseHTTPRequestHandler):
                     "vc_deployments": data["vercel"].get("deployments", 0),
                     "vc_ready": data["vercel"].get("ready", 0),
                     "vc_errors": data["vercel"].get("errors", 0),
+                    "rs_domains": data["resend"].get("domains", 0),
+                    "rs_verified": data["resend"].get("verified", 0),
+                    "rs_delivered": data["resend"].get("delivered", 0),
+                    "rs_bounced": data["resend"].get("bounced", 0),
+                    "rs_failed": data["resend"].get("failed", 0),
                     "updated": data["updated"],
                 })
             elif path == "/domains.json":
@@ -528,12 +603,41 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(data["inventory"])
             elif path == "/vercel.json":
                 self._send(data["vercel"])
+            elif path == "/resend.json":
+                self._send(data["resend"])
             elif path == "/full.json":
                 self._send(data)
             else:
                 self._send({"error": "not found"}, 404)
         except Exception as exc:  # noqa: BLE001
             self._send({"error": str(exc)[:200]}, 500)
+
+    def do_POST(self):  # noqa: N802
+        """Alert sink for Uptime Kuma's webhook notification."""
+        path = self.path.split("?")[0].rstrip("/") or "/"
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode("utf-8", "replace") if length else "{}"
+            if path == "/alert":
+                if ALERT_KEY and self.headers.get("X-Hub-Key") != ALERT_KEY:
+                    self._send({"error": "forbidden"}, 403)
+                    return
+                try:
+                    data = json.loads(raw)
+                except Exception:  # noqa: BLE001
+                    data = {}
+                monitor = ((data.get("monitor") or {}).get("name")
+                           or data.get("name") or "unknown")
+                hb = data.get("heartbeat") or {}
+                status = hb.get("status", data.get("status", "down"))
+                msg = data.get("msg") or hb.get("msg") or ""
+                ok, info = send_alert(monitor, status, msg)
+                self._send({"ok": ok, "monitor": monitor, "detail": info},
+                           200 if ok else 502)
+                return
+            self._send({"error": "not found"}, 404)
+        except Exception as exc:  # noqa: BLE001
+            self._send({"error": str(exc)[:160]}, 500)
 
     def log_message(self, fmt, *args):  # keep the log quiet
         pass

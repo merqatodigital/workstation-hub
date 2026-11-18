@@ -100,9 +100,20 @@
             - field: vc_errors
               label: Errors
     - Resend:
-        href: https://resend.com
-        description: Email sending
+        href: https://resend.com/domains
+        description: Email delivery · david@merqato.digital
         icon: resend
+        widget:
+          type: customapi
+          url: http://hubapi:3010/summary.json
+          refreshInterval: 300000
+          mappings:
+            - field: rs_verified
+              label: Domains
+            - field: rs_delivered
+              label: Delivered
+            - field: rs_bounced
+              label: Bounced
     - UpCloud:
         href: https://hub.upcloud.com/dashboard
         description: VPS 95.111.196.120 · sg-sin1
