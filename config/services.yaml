@@ -1,0 +1,111 @@
+- Infrastructure:
+    - Coolify:
+        href: https://coolify.merqato.digital
+        description: Deploy & control panel
+        icon: coolify
+    - HyperLevel CRM:
+        href: https://crm.merqato.digital
+        description: Business OS
+        icon: hyperlevel
+    - Uptime Kuma:
+        href: https://status.merqato.digital
+        description: Uptime monitor
+        icon: uptime-kuma
+    - MerQato Social:
+        href: https://social.merqato.digital
+        description: Django social app
+        icon: django
+    - Cloudflare:
+        href: https://dash.cloudflare.com
+        description: DNS, email routing, tunnels
+        icon: cloudflare
+    - Vercel:
+        href: https://vercel.com
+        description: Site hosting (8 active)
+        icon: vercel
+    - GitHub:
+        href: https://github.com
+        description: 3 accounts, 49 repos
+        icon: github
+    - Resend:
+        href: https://resend.com
+        description: Email sending
+        icon: resend
+    - UpCloud:
+        href: https://hub.upcloud.com
+        description: VPS (trial, 25 days)
+        icon: upcloud
+
+- Email & Comms:
+    - Gmail:
+        href: https://mail.google.com
+        description: merqato.digital@gmail.com
+        icon: gmail
+    - Resend Emails:
+        href: https://resend.com/emails
+        description: Email logs & sending
+        icon: resend
+    - Resend Domains:
+        href: https://resend.com/domains
+        description: Domain verification
+        icon: resend
+    - Cloudflare Email Routing:
+        href: https://dash.cloudflare.com/4322261acf290539b992fbd803039ca7/email-service/routing
+        description: Email routing rules
+        icon: cloudflare
+
+- Projects:
+    - Amates Solutions:
+        href: https://amatessolutions-automation.vercel.app
+        description: Live client site
+        icon: vercel
+    - Francescas Landscaping:
+        href: https://francescas-landscaping.vercel.app
+        description: Client site
+        icon: vercel
+    - Golden Goose Eggs:
+        href: https://golden-goose-eggs-work.vercel.app
+        description: Client site
+        icon: vercel
+    - SBI Wellness:
+        href: https://sbi-wellness.vercel.app
+        description: Client deck
+        icon: vercel
+    - Pelangs Lechon:
+        href: https://pelangs-lechon.vercel.app
+        description: Client site
+        icon: vercel
+    - NFC Palawan Island:
+        href: https://nfc-palawan-island.vercel.app
+        description: Client site
+        icon: vercel
+    - BAIA Arena:
+        href: https://baia-arena.vercel.app
+        description: Client site
+        icon: vercel
+    - Repository Intelligence:
+        href: https://git.merqato.digital
+        description: Repo intelligence tool
+        icon: github
+    - SBI Medical Deck:
+        href: https://presentation.merqato.digital
+        description: Client presentation
+        icon: vercel
+
+- Client Sites:
+    - Palawan Collective:
+        href: https://palawancollective.com
+        description: Agency website
+        icon: vercel
+    - BAIA Lodge:
+        href: https://baia.merqato.digital
+        description: Client site
+        icon: vercel
+    - Azarraga Glass:
+        href: https://azarraga.merqato.digital
+        description: Client site
+        icon: vercel
+    - SANVIC:
+        href: https://sanvic.merqato.digital
+        description: Client site
+        icon: vercel

@@ -1,0 +1,13 @@
+# Reverse proxy snippet for the Workstation dashboard.
+# Drop into an existing Caddyfile (Caddy must be on the same Docker network
+# or able to reach the host's port 3003).
+#
+# Note: on Linux, `host.docker.internal` needs
+#   extra_hosts: ["host.docker.internal:host-gateway"]
+# on the Caddy service, or you can proxy to the container name instead if
+# Caddy and Homepage share a Docker network.
+
+dash.merqato.digital, work.merqato.digital, home.merqato.digital {
+	reverse_proxy http://host.docker.internal:3003
+	encode gzip
+}

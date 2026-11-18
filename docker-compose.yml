@@ -1,0 +1,15 @@
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    environment:
+      # Hostnames the dashboard is allowed to answer on (comma separated, no spaces)
+      HOMEPAGE_ALLOWED_HOSTS: dash.merqato.digital,work.merqato.digital,home.merqato.digital
+    volumes:
+      - ./config:/app/config
+      # Read-only Docker socket enables the container/service status widgets.
+      # Drop this line if the host is not trusted.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "3003:3000"
+    restart: unless-stopped

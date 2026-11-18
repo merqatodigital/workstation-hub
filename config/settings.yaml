@@ -1,0 +1,18 @@
+title: Palawan Collective - Workstation
+description: Central dashboard for all tools, projects, and services
+theme: dark
+color: slate
+headerStyle: underlined
+layout:
+  Infrastructure:
+    style: row
+    columns: 3
+  Email & Comms:
+    style: row
+    columns: 3
+  Projects:
+    style: row
+    columns: 3
+  Client Sites:
+    style: row
+    columns: 4
