@@ -86,19 +86,20 @@ VPS metrics are produced by `/opt/homepage/vps-agent.sh` every minute into
 `/opt/homepage/hub/vps.json` (root crontab). It reads the UpCloud metadata
 service, `/proc/meminfo`, `/proc/loadavg` and `df`. No API key required.
 
-## Known failing hosts
+## Site Health
 
-`Site Health` probes every public hostname in the Cloudflare zone. Currently
-failing (genuine, not a dashboard bug):
+Probes every public hostname in the Cloudflare zone (15s timeout, follows
+redirects). Currently **15 up / 3 failing** — the failing ones are genuine:
 
 | Host | Symptom |
 | --- | --- |
 | `command.merqato.digital` | 502 — Caddy route exists, nothing listens on :3100 |
-| `susi.merqato.digital` | no TLS certificate / no route |
+| `susi.merqato.digital` | no TLS certificate / no DNS answer |
 | `www.status.merqato.digital` | no such host |
-| `git.merqato.digital` | no route (Vercel project not linked) |
 
-Fix the service, and the tile turns green on its own.
+Fix the service and the tile turns green on its own. Sites that respond slower
+than ~12s are counted as *slow*, not *down* — several Hostinger/Vercel hosts
+sit at 3–15s, which is why the timeout is 15s rather than the 8s default.
 
 ## Automation agent identity
 
