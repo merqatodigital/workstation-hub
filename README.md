@@ -1,23 +1,61 @@
 # MerQato Workstation Hub
 
-A single operational dashboard for a small cloud stack: Homepage for the UI, a
-tiny read-only aggregation API for the services Homepage has no native widget
-for, and a restricted Docker proxy so the dashboard can see container health
-without ever being able to change anything.
+A single operational dashboard for a small cloud stack: a purpose-built UI with a
+Quick Links Manager, a small read-only aggregation API for the services that have
+no native dashboard, and a restricted Docker proxy so the UI can see container
+health without ever being able to change anything.
 
-**No secrets reach the browser.** Tokens live in a root-owned `.env`, are
-mounted into the API container only, and every response is measured data.
+**No secrets reach the browser.** Tokens live in a root-owned `.env`, are mounted
+into the API container only, and every response is measured data.
+
+## Layout
+
+```
+app/server.py            UI + Quick Links API (Python stdlib, no framework)
+app/static/              index.html, app.css, app.js, vendored Inter + Lucide
+hub/hub.py               aggregation API (Cloudflare, GitHub, Vercel, Coolify,
+                         Resend, UpCloud, Docker, project inventory)
+hub/vps-agent.sh         writes vps.json every minute from the host
+config/                  legacy Homepage config (kept for the fallback host)
+WORKSTATION.md           operations, rollback, verification
+```
+
+## The two hosts
+
+| Host | Serves |
+| --- | --- |
+| `home.` | the Workstation app (`app/`, port 3005) |
+| `work.` | the legacy Homepage dashboard (port 3003), kept as a fallback |
+
+## Quick Links Manager
+
+Add, edit, delete, pin, drag-reorder, instant search, category filters, grid or
+list layout, JSON export/import. Links live server-side in `data/links.json`
+with an atomic write and a timestamped backup on every change.
+
+Writes need a signed session cookie plus a same-origin check; URLs must be plain
+http(s) with no embedded credentials.
 
 ## What it shows
 
-| Tile | Source | Data |
+| Card | Source | Data |
 | --- | --- | --- |
-| Coolify | REST API v1 (read-only PAT) | apps, projects, servers reachable, version |
-| Docker (per container) | Homepage docker widget via proxy | CPU / MEM / RX / TX |
-| Cloudflare | REST API (DNS-scoped token) | zones, DNS records, TLS days left |
-| GitHub | public REST API | public repos per account |
-| Uptime Kuma | Homepage uptimekuma widget | up / down / uptime % |
-| Site Health | hub probe | HTTPS probe of every public hostname |
+| VPS | UpCloud metadata + `/proc` | CPU / memory / disk / load / uptime |
+| Containers | Docker socket proxy (read-only) | running, healthy, total |
+| Sites | hub HTTPS probes | up / down / failing names |
+| GitHub | REST API (optional token) | public + private repo counts |
+| Vercel | REST API | projects, ready, errors |
+| Coolify | REST API v1 (read-only PAT) | apps, version, servers |
+| Cloudflare | REST API (DNS-scoped token) | zones, DNS records, TLS days |
+| Resend | REST API | delivered, bounced, verified domains |
+| Projects | inventory snapshot | 51 rows with live URL, repo, state |
+
+## Run it
+
+```bash
+docker compose up -d
+# first run seeds 17 starter links into data/links.json
+```
 | Docker Host | hub + proxy | running / healthy / unhealthy / total |
 | UpCloud | instance metadata + `/proc` | CPU, memory, disk, load, uptime, region |
 
