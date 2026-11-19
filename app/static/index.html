@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>MerQato Workstation</title>
+<meta name="description" content="MerQato Digital — infrastructure, projects and clients in one place." />
+<meta name="color-scheme" content="dark light" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d0f'/%3E%3Cpath d='M8 22V10l8 7 8-7v12' stroke='%232dd4bf' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="26" height="26"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M8 22V10l8 7 8-7v12" stroke="#07110f" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      <span class="brand-text">
+        <strong>MerQato</strong>
+        <small>Workstation</small>
+      </span>
+    </div>
+
+    <nav class="nav" id="nav" aria-label="Primary"></nav>
+
+    <div class="sidebar-foot">
+      <div class="agent" id="agent-status" title="Agent access status">
+        <span class="dot" data-state="unknown"></span>
+        <span class="agent-label">Checking agent…</span>
+      </div>
+      <div class="foot-actions">
+        <button class="icon-btn" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle colour theme">
+          <i data-lucide="sun" class="ico"></i>
+        </button>
+        <button class="icon-btn" id="refresh-btn" type="button" title="Refresh data" aria-label="Refresh data">
+          <i data-lucide="refresh-cw" class="ico"></i>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="icon-btn menu-btn" id="menu-btn" type="button" aria-label="Open menu">
+          <i data-lucide="menu" class="ico"></i>
+        </button>
+        <h1 class="page-title" id="page-title">Overview</h1>
+      </div>
+
+      <div class="topbar-right">
+        <label class="search" for="global-search">
+          <i data-lucide="search" class="ico search-ico" aria-hidden="true"></i>
+          <input id="global-search" type="search" placeholder="Search links and projects…" autocomplete="off" spellcheck="false" />
+          <kbd class="search-kbd">/</kbd>
+        </label>
+        <button class="btn btn-primary" id="add-link-btn" type="button">
+          <i data-lucide="plus" class="ico"></i><span>Add link</span>
+        </button>
+      </div>
+    </header>
+
+    <main id="main" class="content" tabindex="-1">
+      <div id="view" class="view"></div>
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    </main>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-backdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-head">
+      <h2 id="modal-title">Add link</h2>
+      <button class="icon-btn" id="modal-close" type="button" aria-label="Close">
+        <i data-lucide="x" class="ico"></i>
+      </button>
+    </div>
+    <form id="link-form" class="modal-body" novalidate>
+      <input type="hidden" id="f-id" />
+      <label class="field">
+        <span class="field-label">Name</span>
+        <input id="f-name" class="input" type="text" maxlength="80" required placeholder="Coolify" />
+        <span class="field-hint">Shown on the card.</span>
+      </label>
+      <label class="field">
+        <span class="field-label">URL</span>
+        <input id="f-url" class="input" type="url" maxlength="2048" required placeholder="https://coolify.merqato.digital" />
+        <span class="field-hint">http or https only.</span>
+      </label>
+      <label class="field">
+        <span class="field-label">Category</span>
+        <select id="f-category" class="input select"></select>
+      </label>
+      <label class="field">
+        <span class="field-label">Description <em>optional</em></span>
+        <input id="f-desc" class="input" type="text" maxlength="200" placeholder="Deploy and control panel" />
+      </label>
+      <label class="check">
+        <input id="f-pinned" type="checkbox" />
+        <span>Pin to Quick Access</span>
+      </label>
+      <p class="form-error" id="f-error" hidden></p>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="f-cancel" type="button">Cancel</button>
+        <button class="btn btn-primary" id="f-save" type="submit">Save link</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/static/vendor/lucide.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</body>
+</html>
