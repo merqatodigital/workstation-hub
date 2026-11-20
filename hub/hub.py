@@ -211,11 +211,24 @@ def docker_data():
 # -------------------------------------------------------------------- github
 def github_data():
     accounts, total = [], 0
+    auth_headers = None
+    if GITHUB_TOKEN:
+        # Authenticated public-account reads use the token owner's quota and
+        # avoid the shared-VPS-IP unauthenticated rate limit.
+        auth_headers = {
+            "Authorization": "Bearer " + GITHUB_TOKEN,
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "merqato-hub/1.0",
+        }
     for login in GITHUB_ACCOUNTS:
         entry = {"login": login, "public_repos": None, "private_repos": None,
                  "total_repos": None, "error": None, "authenticated": False}
         try:
-            u = http_json("https://api.github.com/users/" + login, timeout=8)
+            u = http_json(
+                "https://api.github.com/users/" + login,
+                headers=auth_headers,
+                timeout=8,
+            )
             entry["public_repos"] = u.get("public_repos", 0)
             entry["name"] = u.get("name") or login
             entry["updated"] = u.get("updated_at")
@@ -224,10 +237,8 @@ def github_data():
             entry["error"] = str(exc)[:80]
 
         # Authenticated pass: only meaningful for the account the token owns.
-        if GITHUB_TOKEN:
-            hdr = {"Authorization": "Bearer " + GITHUB_TOKEN,
-                   "Accept": "application/vnd.github+json",
-                   "User-Agent": "merqato-hub/1.0"}
+        if auth_headers:
+            hdr = auth_headers
             try:
                 me = http_json("https://api.github.com/user", headers=hdr, timeout=8)
                 if (me.get("login") or "").lower() == login.lower():

@@ -87,6 +87,18 @@ class ProjectNormalizationTests(unittest.TestCase):
         self.assertEqual(rows[0]["repoUrl"], "")
 
 
+class GitHubIntegrationTests(unittest.TestCase):
+    def test_public_account_reads_use_authenticated_quota_when_available(self):
+        with mock.patch.object(hub, "GITHUB_TOKEN", "test-token"), \
+                mock.patch.object(hub, "GITHUB_ACCOUNTS", ["example"]), \
+                mock.patch.object(hub, "http_json", return_value={"public_repos": 3}) as mocked:
+            data = hub.github_data()
+
+        self.assertEqual(data["public_repos_total"], 3)
+        public_call = mocked.call_args_list[0]
+        self.assertEqual(public_call.kwargs["headers"]["Authorization"], "Bearer test-token")
+
+
 class SecurityAndEnvironmentTests(unittest.TestCase):
     def test_alert_webhook_fails_closed_without_a_key(self):
         self.assertFalse(hub.alert_key_matches("anything", ""))
