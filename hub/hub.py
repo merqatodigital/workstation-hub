@@ -330,7 +330,8 @@ def send_alert(monitor, status, message):
 def vercel_data():
     """Projects, deployments and health from the Vercel REST API (read-only)."""
     out = {"ok": False, "error": None, "team": None, "projects": 0,
-           "deployments": 0, "ready": 0, "errors": 0, "latest": []}
+           "deployments": 0, "ready": 0, "errors": 0, "error_details": [],
+           "latest": []}
     if not VERCEL_TOKEN:
         out["error"] = "no token"
         return out
@@ -356,6 +357,11 @@ def vercel_data():
                 out["ready"] += 1
             elif state in ("ERROR", "CANCELED"):
                 out["errors"] += 1
+                out["error_details"].append({
+                    "name": d.get("name"),
+                    "state": state,
+                    "created": d.get("createdAt"),
+                })
             if d.get("target") == "production":
                 out["latest"].append({
                     "name": d.get("name"),
@@ -399,9 +405,51 @@ def inventory_data():
             "deployment_errors": summary.get("latestDeploymentErrors", 0),
             "review_notes": len(data.get("reviewNotes") or []),
         })
+        out["projects"] = normalize_projects(data.get("projects") or [])
     except Exception as exc:  # noqa: BLE001
         out["error"] = str(exc)[:120]
     return out
+
+
+def normalize_projects(items):
+    """Flatten the inventory snapshot into rows the dashboard can render."""
+    rows = []
+    for p in items[:200]:
+        domains = p.get("domains") or []
+        url = p.get("deploymentURL") or ""
+        if not url and domains:
+            url = "https://" + domains[0]
+        rows.append({
+            "name": p.get("project") or "untitled",
+            "url": url,
+            "repo": p.get("repo"),
+            "repoUrl": p.get("repoURL"),
+            "provider": "Vercel" if p.get("vercelTeam") else None,
+            "state": (p.get("state") or "").upper() or None,
+            "updatedAt": p.get("updatedAt"),
+            "protected": bool(p.get("protected")),
+        })
+    rows.sort(key=lambda r: (r["state"] != "ERROR", r["name"].lower()))
+    return rows
+
+
+def summarize_probes(probes):
+    """Summarize HTTPS probes without hiding failing hostnames."""
+    failing = [p for p in probes if not p["ok"]]
+    slow = [p["host"] for p in probes if p["ok"] and p["slow"]]
+    failing_hosts = [p["host"] for p in failing]
+    slow_hosts = list(slow)
+    return {
+        "total": len(probes),
+        "ok": len(probes) - len(failing),
+        "failing": len(failing),
+        "failing_hosts": failing_hosts,
+        "failing_names": ", ".join(failing_hosts) or "none",
+        "slowest_ms": max([p["ms"] for p in probes], default=0),
+        "slow_count": len(slow_hosts),
+        "slow_hosts": slow_hosts,
+        "slow_names": ", ".join(slow_hosts) or "none",
+    }
 
 
 # --------------------------------------------------------------------- build
@@ -410,8 +458,7 @@ def build():
     hosts = cfdata["hosts"]
     probes = probe_all(hosts) if hosts else []
 
-    failing = [p for p in probes if not p["ok"]]
-    slow = [p["host"] for p in probes if p["ok"] and p["slow"]]
+    domain_summary = summarize_probes(probes)
 
     certs = {}
     for p in probes[:12]:
@@ -430,15 +477,7 @@ def build():
 
     return {
         "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "domains": {
-            "total": len(probes),
-            "ok": len(probes) - len(failing),
-            "failing": len(failing),
-            "failing_names": ", ".join(p["host"] for p in failing)[:120] or "none",
-            "slowest_ms": max([p["ms"] for p in probes], default=0),
-            "slow_count": len(slow),
-            "slow_names": ", ".join(slow)[:120] or "none",
-        },
+        "domains": domain_summary,
         "certificates": {
             "checked": len(certs),
             "min_days": min_cert if min_cert is not None else -1,
@@ -545,7 +584,9 @@ class Handler(BaseHTTPRequestHandler):
                     "domains_ok": data["domains"]["ok"],
                     "domains_failing": data["domains"]["failing"],
                     "failing_names": data["domains"]["failing_names"],
+                    "failing_hosts": data["domains"].get("failing_hosts", []),
                     "slow_count": data["domains"].get("slow_count", 0),
+                    "slow_hosts": data["domains"].get("slow_hosts", []),
                     "containers_running": data["docker"]["running"],
                     "containers_healthy": data["docker"]["healthy"],
                     "containers_unhealthy": data["docker"]["unhealthy"],
@@ -580,6 +621,7 @@ class Handler(BaseHTTPRequestHandler):
                     "vc_deployments": data["vercel"].get("deployments", 0),
                     "vc_ready": data["vercel"].get("ready", 0),
                     "vc_errors": data["vercel"].get("errors", 0),
+                    "vc_error_details": data["vercel"].get("error_details", []),
                     "rs_domains": data["resend"].get("domains", 0),
                     "rs_verified": data["resend"].get("verified", 0),
                     "rs_delivered": data["resend"].get("delivered", 0),
@@ -601,6 +643,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(data["vps"])
             elif path == "/inventory.json":
                 self._send(data["inventory"])
+            elif path == "/projects.json":
+                self._send({"projects": data["inventory"].get("projects") or []})
             elif path == "/vercel.json":
                 self._send(data["vercel"])
             elif path == "/resend.json":

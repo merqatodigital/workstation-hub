@@ -20,7 +20,7 @@ user: david
 pass: <in /opt/homepage/auth.txt>
 ```
 
-The password prompt covers the whole origin, so Homepage's widget XHRs are
+The password prompt covers the whole origin, so Workstation and hub XHRs are
 authenticated by the same cached browser credentials — no "API Error" tiles.
 
 ### Cloudflare Access details (work host)
@@ -41,7 +41,8 @@ login flow.
 
 | Container | Port | Purpose |
 | --- | --- | --- |
-| `homepage` | 3003 | Dashboard UI (Homepage 2.8.0) |
+| `workstation` | 3005 | Workstation UI + Quick Links Manager (`/opt/homepage/app/server.py`) |
+| `homepage` | 3003 | Legacy Homepage dashboard kept as the `work.` fallback |
 | `hubapi` | 3010 | Aggregation API (python stdlib, `/opt/homepage/hub/hub.py`) |
 | `dockerproxy` | 2375 (internal) | Read-only Docker API (tecnativa/docker-socket-proxy) |
 | `hub-files` | 3004 | Static downloads, e.g. `/files/workstation-hub.zip` |
@@ -52,7 +53,7 @@ login flow.
 home.merqato.digital   (basic_auth)
   /files/*  -> host.docker.internal:3004
   /hub/*    -> host.docker.internal:3010
-  *         -> host.docker.internal:3003
+  *         -> host.docker.internal:3005
 
 work.merqato.digital   (Cloudflare Access at the edge)
   /files/*  -> host.docker.internal:3004
@@ -82,6 +83,10 @@ docker exec social-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 | `/github.json` | per-account public repo counts |
 | `/coolify.json` | Coolify projects/apps/servers/version |
 | `/vps.json` | UpCloud instance metadata + live host resources |
+| `/vercel.json` | Vercel projects, deployment states, and error details |
+| `/resend.json` | Resend domains and the latest delivery outcomes |
+| `/inventory.json` | Project-inventory summary and normalized project rows |
+| `/projects.json` | Normalized project rows used by the Workstation Projects view |
 | `/full.json` | everything |
 
 Responses are cached 60s and refreshed in a background thread, so a request
@@ -97,7 +102,10 @@ secret is ever returned; the Cloudflare and Coolify tokens live only in
 | Cloudflare | REST API, DNS-scoped token | `/opt/homepage/.env` → `CF_API_TOKEN` |
 | Docker | read-only socket proxy (`CONTAINERS`,`INFO`,`VERSION` only) | none |
 | Uptime Kuma | Homepage `uptimekuma` widget, public status page `/status/merqato` | none |
-| GitHub | public REST API, 3 accounts | none (public data) |
+| GitHub | REST API, 3 accounts; token adds private-repo and inventory access | `GITHUB_TOKEN` when private inventory access is required |
+| Vercel | REST API, latest 20 deployments | `/opt/homepage/.env` → `VERCEL_TOKEN` |
+| Resend | REST API, latest 20 delivery records | `/opt/homepage/.env` → `RESEND_API_KEY` |
+| Project inventory | `inventory.json` in the `merqatodigital/projects` GitHub repository | `GITHUB_TOKEN` |
 | Coolify | REST API v1, read-only PAT | `COOLIFY_TOKEN` (token file `/opt/homepage/.coolify-token`) |
 | UpCloud | instance metadata `169.254.169.254` + `/proc`, written by cron | none |
 
@@ -109,19 +117,26 @@ VPS metrics are produced by `/opt/homepage/vps-agent.sh` every minute into
 `/opt/homepage/hub/vps.json` (root crontab). It reads the UpCloud metadata
 service, `/proc/meminfo`, `/proc/loadavg` and `df`. No API key required.
 
-## Known failing hosts
+## Known failing endpoints
 
-`Site Health` probes every public hostname in the Cloudflare zone (15s timeout,
-follows redirects). Currently **15 up / 3 failing** — the failing ones are real:
+`Site Health` probes every public hostname in the Cloudflare zone (20s timeout,
+follows redirects). As of 20 Nov 2026, **17 up / 6 failing**:
 
-| Host | Symptom |
-| --- | --- |
-| `command.merqato.digital` | 502 — Caddy route exists, nothing listens on :3100 |
-| `susi.merqato.digital` | no TLS certificate / no DNS answer |
-| `www.status.merqato.digital` | no such host |
+| Host | Classification | Symptom |
+| --- | --- | --- |
+| `command.merqato.digital` | active origin issue | 502 — Caddy routes to port 3100, where no listener/container exists |
+| `www.palawancollective.com` | active origin issue | Cloudflare 526 — origin TLS validation fails; the apex works |
+| `sanvic.palawancollective.com` | obsolete alias | obsolete unproxied alias; origin TLS fails; canonical `sanvic.merqato.digital` works |
+| `www.sanvic.palawancollective.com` | obsolete alias | obsolete unproxied alias; origin TLS fails |
+| `susi.merqato.digital` | obsolete alias | obsolete unproxied host with no valid TLS route |
+| `www.status.merqato.digital` | obsolete alias | obsolete alias with no Caddy route; canonical `status.merqato.digital` works |
 
-Sites that answer slower than ~12s are reported as *slow* rather than *down*.
-Several Hostinger/Vercel hosts take 3–15s, which is why the timeout is 15s.
+The two active origin issues require owner approval before DNS, Caddy, or service
+changes. The four obsolete aliases should be retired separately; deleting them
+is not part of a Workstation release.
+
+A response at or above 80% of the 20s timeout is reported as *slow* rather than
+*down*. These are monitored HTTPS endpoints, not DNS-only health checks.
 
 ## Automation agent identity
 
@@ -151,6 +166,7 @@ Every change is snapshotted in `/opt/homepage/backups/`:
 | `services.yaml.<stamp>` | dashboard tiles |
 | `settings.yaml.<stamp>` | layout |
 | `hub.py.<stamp>` | hub API logic |
+| `app.js.<stamp>` | Workstation front end |
 | `docker-compose.yml.<stamp>` | container topology |
 | `kuma.db.<stamp>` | Uptime Kuma status page |
 | `env.<stamp>` | integration secrets |
@@ -175,6 +191,7 @@ cd /opt/homepage && docker compose restart hubapi
 curl -s -o /dev/null -w '%{http_code}\n' https://home.merqato.digital                      # 401
 curl -s -o /dev/null -w '%{http_code}\n' -u david:$PW https://home.merqato.digital        # 200
 curl -s -o /dev/null -w '%{http_code}\n' -u david:$PW https://home.merqato.digital/hub/summary.json
+curl -s -o /dev/null -w '%{http_code}\n' -u david:$PW https://home.merqato.digital/hub/projects.json
 curl -s -o /dev/null -w '%{http_code}\n' https://work.merqato.digital                     # 302 -> Access
 curl -s -o /dev/null -w '%{http_code}\n' https://status.merqato.digital/api/status-page/merqato   # 200
 ```

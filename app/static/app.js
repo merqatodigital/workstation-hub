@@ -22,6 +22,19 @@
 
   const CATEGORIES = ["Infrastructure", "Projects", "Clients", "Email", "Agents", "Other"];
 
+  // Lucide is a general-purpose icon set and does not ship brand logos.
+  // Keep the saved link names stable, but resolve them to supported icons.
+  const ICON_ALIASES = Object.freeze({
+    vercel: "triangle",
+    cloudflare: "cloud",
+    coolify: "layers",
+    upcloud: "cloud-cog",
+    projects: "folder-kanban",
+    bitwarden: "key-round",
+    social: "share-2",
+    hyperlevel: "briefcase-business",
+  });
+
   const state = {
     links: [],
     metrics: null,
@@ -42,11 +55,29 @@
       { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
     ));
 
-  const icon = (name, cls = "") =>
-    `<i data-lucide="${esc(name)}" class="ico ${cls}" aria-hidden="true"></i>`;
+  const pascalIconName = (name) =>
+    name.split(/[-_\s]+/).filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join("");
+
+  const icon = (name, cls = "") => {
+    const requested = String(name || "link").trim().toLowerCase();
+    const candidate = ICON_ALIASES[requested] || requested || "link";
+    const library = window.lucide;
+    const supported = !library ||
+      Object.prototype.hasOwnProperty.call(library, pascalIconName(candidate));
+    const safeName = supported ? candidate : "link";
+    return `<i data-lucide="${esc(safeName)}" class="ico ${cls}" aria-hidden="true"></i>`;
+  };
 
   const hostOf = (url) => {
     try { return new URL(url).host.replace(/^www\./, ""); } catch { return url; }
+  };
+
+  const formatDate = (value, fallback = "—") => {
+    if (value == null || value === "") return fallback;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? fallback : date.toISOString().slice(0, 10);
   };
 
   const freeRam = (m) => {
@@ -81,6 +112,11 @@
     const btn = $("#theme-toggle");
     if (btn) btn.innerHTML = icon(theme === "dark" ? "sun" : "moon");
     if (window.lucide) window.lucide.createIcons();
+  }
+
+  function toggleTheme() {
+    applyTheme(state.theme === "dark" ? "light" : "dark");
+    render();
   }
 
   function applyLayout(layout) {
@@ -155,9 +191,9 @@
     return `
       <div class="card metric">
         <div class="metric-top">${icon(iconName)}${esc(label)}</div>
-        <div class="metric-value">${value}${unit ? `<small>${esc(unit)}</small>` : ""}</div>
+        <div class="metric-value">${esc(value)}${unit ? `<small>${esc(unit)}</small>` : ""}</div>
         ${width == null ? "" : `<div class="metric-bar"><span style="width:${width}%"${tone ? ` data-tone="${tone}"` : ""}></span></div>`}
-        ${foot ? `<div class="metric-foot"><span>${foot}</span></div>` : ""}
+        ${foot ? `<div class="metric-foot"><span>${esc(foot)}</span></div>` : ""}
       </div>`;
   }
 
@@ -174,11 +210,12 @@
 
   function buildAlerts(m) {
     const alerts = [];
+    const failingHosts = Array.isArray(m.failing_hosts) ? m.failing_hosts : [];
     if (m.domains_failing > 0) {
       alerts.push({
         tone: "danger", iconName: "alert-octagon",
-        title: `${m.domains_failing} site${m.domains_failing > 1 ? "s" : ""} not responding`,
-        meta: m.failing_names || "Check the Site Health view",
+        title: `${m.domains_failing} monitored endpoint${m.domains_failing > 1 ? "s" : ""} failing`,
+        meta: failingHosts.join(", ") || m.failing_names || "Check the Site Health view",
       });
     }
     if (m.containers_unhealthy > 0) {
@@ -189,24 +226,30 @@
       });
     }
     if (m.vc_errors > 0) {
+      const errorDetails = Array.isArray(m.vc_error_details) ? m.vc_error_details : [];
+      const details = errorDetails.map((item) => {
+        const state = item.state ? String(item.state).toUpperCase() : "ERROR";
+        return `${item.name || "Unknown project"} · ${state} · ${formatDate(item.created, "date unknown")}`;
+      }).join(", ");
+      const sampleSize = Number(m.vc_deployments) || 0;
       alerts.push({
         tone: "warn", iconName: "triangle-alert",
-        title: `${m.vc_errors} Vercel deployment${m.vc_errors > 1 ? "s" : ""} failed`,
-        meta: "Review the latest production deployments",
+        title: `${m.vc_errors} Vercel deployment error${m.vc_errors > 1 ? "s" : ""} in latest ${sampleSize || "available"} record${sampleSize === 1 ? "" : "s"}`,
+        meta: details || "Review the latest production deployments",
       });
     }
     if (m.inv_deploy_errors > 0) {
       alerts.push({
         tone: "warn", iconName: "git-branch",
-        title: `${m.inv_deploy_errors} deployment${m.inv_deploy_errors > 1 ? "s" : ""} in error state`,
+        title: `${m.inv_deploy_errors} historical deployment${m.inv_deploy_errors > 1 ? "s" : ""} in error state`,
         meta: `From the projects inventory snapshot (${m.inv_captured || "unknown date"})`,
       });
     }
     if (m.rs_bounced > 0) {
       alerts.push({
         tone: "warn", iconName: "mail-warning",
-        title: `${m.rs_bounced} email${m.rs_bounced > 1 ? "s" : ""} bounced`,
-        meta: "Recent Resend delivery log",
+        title: `${m.rs_bounced} recent email${m.rs_bounced > 1 ? "s" : ""} bounced`,
+        meta: "Resend delivery log; test messages may be included",
       });
     }
     if (!alerts.length) {
@@ -392,7 +435,7 @@
 
     const rows = projects.map((p) => {
       const tone = p.state === "READY" ? "ok" : p.state === "ERROR" ? "danger" : p.state ? "warn" : "muted";
-      const updated = p.updatedAt ? new Date(p.updatedAt).toISOString().slice(0, 10) : "—";
+      const updated = formatDate(p.updatedAt);
       return `<tr>
         <td><span class="proj-name">${esc(p.name)}</span><span class="sub">${esc(p.provider || "Vercel")}${p.protected ? " · protected" : ""}</span></td>
         <td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(p.url))}</a>` : `<span class="sub">no domain</span>`}</td>
@@ -424,7 +467,7 @@
       <section>
         <div class="section-head"><h2 class="section-title">Client sites</h2><span class="section-note">${links.length} tracked</span></div>
         ${links.length
-          ? `<div class="link-grid">${links.map(linkCard).join("")}</div>`
+          ? `<div class="link-grid${state.layout === "list" ? " list" : ""}">${links.map(linkCard).join("")}</div>`
           : emptyState("building-2", "No client sites tracked", "Add links in the Clients category to see them here.")}
       </section>`;
   }
@@ -594,7 +637,7 @@
       }
     });
 
-    $("#theme-toggle").addEventListener("click", () => applyTheme(state.theme === "dark" ? "light" : "dark"));
+    $("#theme-toggle").addEventListener("click", toggleTheme);
     $("#refresh-btn").addEventListener("click", () => refresh(true));
     $("#add-link-btn").addEventListener("click", () => openModal(null));
     $("#modal-close").addEventListener("click", closeModal);
@@ -647,7 +690,7 @@
 
       if (action === "add") return openModal(null);
       if (action === "refresh") return refresh(true);
-      if (action === "theme") return applyTheme(state.theme === "dark" ? "light" : "dark");
+      if (action === "theme") return toggleTheme();
       if (action === "open") {
         const opened = state.links.find((l) => l.id === target.dataset.id);
         if (opened) window.open(opened.url, "_blank", "noopener");
@@ -679,10 +722,11 @@
       if (action === "reset") {
         if (!confirm("Replace every link with the starter set?")) return;
         try {
-          const starters = await api("/api/starter-links").catch(() => null);
-          if (starters && starters.links) {
-            await api("/api/links/import", { method: "POST", body: JSON.stringify({ links: starters.links }) });
+          const starters = await api("/api/starter-links");
+          if (!starters || !Array.isArray(starters.links)) {
+            throw new Error("Starter links are unavailable");
           }
+          await api("/api/links/import", { method: "POST", body: JSON.stringify({ links: starters.links }) });
           await refresh();
           toast("Starter links restored");
         } catch (err) { toast(err.message, "error"); }
@@ -745,17 +789,19 @@
       const targetId = card.dataset.id;
       if (targetId === dragId) return;
 
-      const ordered = visibleLinks().map((l) => l.id);
-      const from = ordered.indexOf(dragId);
-      const to = ordered.indexOf(targetId);
-      ordered.splice(from, 1);
-      ordered.splice(to, 0, dragId);
+      // Move only the dragged link in the complete global order. This keeps
+      // links hidden by the current search/category in their original places.
+      const fullOrder = state.links.map((l) => l.id);
+      const from = fullOrder.indexOf(dragId);
+      const targetFrom = fullOrder.indexOf(targetId);
+      if (from === -1 || targetFrom === -1) return;
+      fullOrder.splice(from, 1);
+      let targetIndex = fullOrder.indexOf(targetId);
+      if (from < targetFrom) targetIndex += 1;
+      fullOrder.splice(targetIndex, 0, dragId);
       dragId = null;
 
-      // persist relative order across the whole list
       const byId = new Map(state.links.map((l) => [l.id, l]));
-      const rest = state.links.filter((l) => !ordered.includes(l.id)).map((l) => l.id);
-      const fullOrder = [...ordered, ...rest];
       const payload = {};
       state.links = fullOrder.map((id, i) => ({ ...byId.get(id), order: i }));
 

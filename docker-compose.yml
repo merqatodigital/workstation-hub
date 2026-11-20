@@ -3,15 +3,13 @@ services:
     image: ghcr.io/gethomepage/homepage:latest
     container_name: homepage
     environment:
-      HOMEPAGE_ALLOWED_HOSTS: work.example.com
+      HOMEPAGE_ALLOWED_HOSTS: dash.merqato.digital,work.merqato.digital,home.merqato.digital
     volumes:
-      - ./config:/app/config
+      - /opt/homepage/config:/app/config
     ports:
       - "3003:3000"
     restart: unless-stopped
 
-  # Read-only Docker API. Only CONTAINERS + VERSION + INFO are exposed;
-  # no write, exec or start/stop endpoints. The socket is mounted :ro.
   dockerproxy:
     image: tecnativa/docker-socket-proxy:latest
     container_name: dockerproxy
@@ -33,33 +31,56 @@ services:
       - "2375"
     restart: unless-stopped
 
-  # Aggregation API for widgets Homepage has no native support for
-  # (Cloudflare, GitHub, Coolify, UpCloud).
   hubapi:
     image: python:3.12-alpine
     container_name: hubapi
     command: ["python", "-u", "/app/hub.py"]
     volumes:
-      - ./hub:/app:ro
+      - /opt/homepage/hub:/app:ro
     environment:
       CF_API_TOKEN: ${CF_API_TOKEN}
-      GITHUB_ACCOUNTS: ${GITHUB_ACCOUNTS:-merqatodigital,sanvicpalawan}
+      GITHUB_ACCOUNTS: ${GITHUB_ACCOUNTS}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      INVENTORY_REPO: ${INVENTORY_REPO:-merqatodigital/projects}
+      VERCEL_TOKEN: ${VERCEL_TOKEN}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      ALERT_KEY: ${ALERT_KEY}
+      ALERT_TO: ${ALERT_TO}
+      ALERT_FROM: ${ALERT_FROM}
+      CACHE_TTL: ${CACHE_TTL}
+      PROBE_TIMEOUT: ${PROBE_TIMEOUT:-20}
+      FIRST_BUILD_WAIT: ${FIRST_BUILD_WAIT:-25}
+      DOCKER_API: http://dockerproxy:2375
       COOLIFY_URL: ${COOLIFY_URL}
       COOLIFY_TOKEN: ${COOLIFY_TOKEN}
-      CACHE_TTL: ${CACHE_TTL:-60}
-      DOCKER_API: http://dockerproxy:2375
     ports:
       - "3010:3010"
     depends_on:
       - dockerproxy
     restart: unless-stopped
 
-  # Static file downloads (e.g. the partner zip)
   files:
     image: nginx:alpine
     container_name: hub-files
     volumes:
-      - ./static:/usr/share/nginx/html:ro
+      - /opt/homepage/static:/usr/share/nginx/html:ro
+      - /opt/homepage/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "3004:80"
+    restart: unless-stopped
+
+  # MerQato Workstation UI + Quick Links Manager (stdlib Python, no framework)
+  workstation:
+    image: python:3.12-alpine
+    container_name: workstation
+    command: ["python", "-u", "/app/server.py"]
+    volumes:
+      - /opt/homepage/app:/app:ro
+      - /opt/homepage/data:/data
+    environment:
+      WS_PORT: "3005"
+      WS_DATA_DIR: /data
+      WS_STATIC_DIR: /app/static
+    ports:
+      - "3005:3005"
     restart: unless-stopped

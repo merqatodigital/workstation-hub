@@ -1,22 +1,23 @@
 # MerQato Workstation Hub
 
 A single operational dashboard for a small cloud stack: a purpose-built UI with a
-Quick Links Manager, a small read-only aggregation API for the services that have
-no native dashboard, and a restricted Docker proxy so the UI can see container
-health without ever being able to change anything.
+Quick Links Manager, a small read-only aggregation API for services that have no
+native dashboard, and a restricted Docker proxy so the UI can see container health
+without being able to change anything.
 
 **No secrets reach the browser.** Tokens live in a root-owned `.env`, are mounted
 into the API container only, and every response is measured data.
 
 ## Layout
 
-```
+```text
 app/server.py            UI + Quick Links API (Python stdlib, no framework)
 app/static/              index.html, app.css, app.js, vendored Inter + Lucide
 hub/hub.py               aggregation API (Cloudflare, GitHub, Vercel, Coolify,
                          Resend, UpCloud, Docker, project inventory)
 hub/vps-agent.sh         writes vps.json every minute from the host
 config/                  legacy Homepage config (kept for the fallback host)
+tests/                   Python regression tests for hub and URL validation
 WORKSTATION.md           operations, rollback, verification
 ```
 
@@ -24,17 +25,21 @@ WORKSTATION.md           operations, rollback, verification
 
 | Host | Serves |
 | --- | --- |
-| `home.` | the Workstation app (`app/`, port 3005) |
-| `work.` | the legacy Homepage dashboard (port 3003), kept as a fallback |
+| `home.merqato.digital` | the Workstation app (`app/`, port 3005) |
+| `work.merqato.digital` | the legacy Homepage dashboard (port 3003), kept as a fallback |
+
+`dash.merqato.digital` permanently redirects to `home.merqato.digital`.
 
 ## Quick Links Manager
 
 Add, edit, delete, pin, drag-reorder, instant search, category filters, grid or
-list layout, JSON export/import. Links live server-side in `data/links.json`
+list layout, and JSON export/import. Links live server-side in `data/links.json`
 with an atomic write and a timestamped backup on every change.
 
 Writes need a signed session cookie plus a same-origin check; URLs must be plain
-http(s) with no embedded credentials.
+HTTP(S) with no embedded credentials. Saved link names remain stable when Lucide
+does not provide a matching brand icon; the UI resolves them to supported icons
+without rewriting the saved data.
 
 ## What it shows
 
@@ -42,81 +47,74 @@ http(s) with no embedded credentials.
 | --- | --- | --- |
 | VPS | UpCloud metadata + `/proc` | CPU / memory / disk / load / uptime |
 | Containers | Docker socket proxy (read-only) | running, healthy, total |
-| Sites | hub HTTPS probes | up / down / failing names |
+| Sites | hub HTTPS probes | complete up/down lists, latency, certificate summary |
 | GitHub | REST API (optional token) | public + private repo counts |
-| Vercel | REST API | projects, ready, errors |
+| Vercel | REST API | projects, ready states, deployment errors with dates |
 | Coolify | REST API v1 (read-only PAT) | apps, version, servers |
 | Cloudflare | REST API (DNS-scoped token) | zones, DNS records, TLS days |
 | Resend | REST API | delivered, bounced, verified domains |
-| Projects | inventory snapshot | 51 rows with live URL, repo, state |
+| Projects | GitHub inventory snapshot | normalized rows with live URL, repo, state |
 
-## Run it
+## Production layout
 
-```bash
-docker compose up -d
-# first run seeds 17 starter links into data/links.json
-```
-| Docker Host | hub + proxy | running / healthy / unhealthy / total |
-| UpCloud | instance metadata + `/proc` | CPU, memory, disk, load, uptime, region |
+`docker-compose.yml` follows the live production layout under `/opt/homepage`:
 
-## Layout
+| Service | Port | Purpose |
+| --- | --- | --- |
+| `workstation` | 3005 | Workstation UI + Quick Links Manager |
+| `hubapi` | 3010 | aggregation API |
+| `dockerproxy` | internal | read-only Docker API |
+| `homepage` | 3003 | legacy Homepage fallback |
+| `files` | 3004 | static downloads |
 
-```
-docker-compose.yml     Homepage + dockerproxy + hubapi + files
-Caddyfile.example      edge routing incl. Access-protected canonical host
-config/services.yaml   dashboard tiles and widget mappings
-config/settings.yaml   groups and column layout
-config/docker.yaml     points Homepage at the read-only proxy
-hub/hub.py             aggregation API (python stdlib only)
-hub/vps-agent.sh       writes vps.json every minute from the host
-WORKSTATION.md         operations, rollback, verification
-```
+The edge-routing example is in `Caddyfile.example`. The canonical `home` host
+uses Basic Auth and routes to port 3005; the Access-protected `work` host keeps
+the legacy Homepage on port 3003. Both expose `/hub/*` on port 3010.
 
-## Quick start
+## Run and verify
+
+The Compose file uses the production paths under `/opt/homepage`. For a local
+checkout, adjust the bind mounts to that checkout before starting the stack.
 
 ```bash
-cp .env.example .env      # fill in tokens
+cp .env.example .env       # fill in tokens; chmod 600
+docker compose config --quiet
 docker compose up -d
-# first run of vps-agent.sh, then add to cron:
-chmod +x hub/vps-agent.sh && ./hub/vps-agent.sh
-#   * * * * * /path/to/hub/vps-agent.sh >/dev/null 2>&1
 ```
 
-Then point your edge proxy at the `work` hostname:
+Run the local regression checks before deployment:
 
+```bash
+python -m unittest discover -s tests -v
+node --check app/static/app.js
+python -m py_compile app/server.py hub/hub.py
 ```
-work.example.com
-  /files/*  -> host.docker.internal:3004
-  /hub/*    -> host.docker.internal:3010
-  *         -> host.docker.internal:3003
-```
-
-Put Cloudflare Access (or any authenticating proxy) in front of the hostname.
-Do not rely on app-level passwords — browsers drop URL-embedded basic-auth
-credentials on subresource requests, which breaks widget fetches.
 
 ## Credentials
 
 | Variable | Scope | Notes |
 | --- | --- | --- |
-| `CF_API_TOKEN` | Zone:Read, DNS:Read | certificate days come from a live TLS handshake, not the API |
-| `COOLIFY_TOKEN` | Coolify PAT, ability `read` | must belong to the team that owns the resources (often the root team, id 0) |
-| `GITHUB_ACCOUNTS` | none | comma-separated logins, public data only |
+| `CF_API_TOKEN` | Zone:Read, DNS:Read | certificate days come from a live TLS handshake |
+| `COOLIFY_TOKEN` | Coolify PAT, ability `read` | must belong to the team that owns the resources |
+| `GITHUB_TOKEN` | optional | needed for private repos and the project inventory |
+| `GITHUB_ACCOUNTS` | none | comma-separated logins used for public counts |
+| `VERCEL_TOKEN` | read-only REST access | project and deployment counts |
+| `RESEND_API_KEY` | read-only REST access | domain and delivery-event counts |
+| `INVENTORY_REPO` | GitHub repository | defaults to `merqatodigital/projects` |
 | `CACHE_TTL` | none | seconds, default 60 |
-
-Adding a Coolify token: `POST` must return 403 afterwards. If it returns 200
-the token can mutate infrastructure and must be recreated with `read` only.
+| `PROBE_TIMEOUT` | none | HTTPS probe timeout in seconds, default 20 |
 
 ## Hub API
 
-`/summary.json` backs every customapi tile. Also available: `/domains.json`,
-`/cloudflare.json`, `/docker.json`, `/github.json`, `/coolify.json`,
-`/vps.json`, `/full.json`, `/health`.
+`/summary.json` backs the Workstation and legacy custom-API tiles. Also
+available: `/domains.json`, `/cloudflare.json`, `/docker.json`, `/github.json`,
+`/coolify.json`, `/vps.json`, `/vercel.json`, `/resend.json`, `/inventory.json`,
+`/projects.json`, `/full.json`, and `/health`.
 
 ## Security notes
 
-- `dockerproxy` exposes only `CONTAINERS`, `VERSION`, `INFO`. `EXEC=0` and
-  `POST=0` mean a compromised dashboard still cannot start a container.
-- The hub never returns a token, only counts derived from one.
-- Automation should use a dedicated key-only account with a narrow sudo
-  allowlist plus an audit log, never shared root.
+- `dockerproxy` exposes only `CONTAINERS`, `VERSION`, and `INFO`. `EXEC=0` and
+  `POST=0` mean a compromised dashboard cannot start a container.
+- The hub never returns a token, only counts and normalized rows derived from one.
+- Automation uses a dedicated key-only account with a narrow sudo allowlist and
+  an audit log, never a shared root credential.
