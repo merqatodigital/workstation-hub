@@ -55,20 +55,54 @@
       { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
     ));
 
-  const pascalIconName = (name) =>
-    name.split(/[-_\s]+/).filter(Boolean)
+  function pascalIconName(name) {
+    return String(name).split(/[-_\s]+/).filter(Boolean)
       .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
       .join("");
+  }
+
+  function resolveIconName(name, aliases = ICON_ALIASES, library = window.lucide) {
+    const requested = String(name || "link").trim().toLowerCase();
+    const candidate = Object.prototype.hasOwnProperty.call(aliases, requested)
+      ? aliases[requested]
+      : requested;
+    const safeCandidate = typeof candidate === "string" && candidate ? candidate : "link";
+    const supported = !library ||
+      Object.prototype.hasOwnProperty.call(library, pascalIconName(safeCandidate));
+    return supported ? safeCandidate : "link";
+  }
 
   const icon = (name, cls = "") => {
-    const requested = String(name || "link").trim().toLowerCase();
-    const candidate = ICON_ALIASES[requested] || requested || "link";
-    const library = window.lucide;
-    const supported = !library ||
-      Object.prototype.hasOwnProperty.call(library, pascalIconName(candidate));
-    const safeName = supported ? candidate : "link";
+    const safeName = resolveIconName(name);
     return `<i data-lucide="${esc(safeName)}" class="ico ${cls}" aria-hidden="true"></i>`;
   };
+
+  function safeHttpUrl(value) {
+    if (typeof value !== "string" || !value.trim()) return "";
+    const candidate = value.trim();
+    if (/[\s\u0000-\u001f\u007f]/.test(candidate)) return "";
+    try {
+      const parsed = new URL(candidate);
+      if (!["http:", "https:"].includes(parsed.protocol)) return "";
+      if (parsed.username || parsed.password) return "";
+      return candidate;
+    } catch {
+      return "";
+    }
+  }
+
+  function reorderIds(ids, dragId, targetId) {
+    if (!Array.isArray(ids) || dragId === targetId) return Array.isArray(ids) ? ids.slice() : [];
+    const fullOrder = ids.slice();
+    const from = fullOrder.indexOf(dragId);
+    const targetFrom = fullOrder.indexOf(targetId);
+    if (from === -1 || targetFrom === -1) return fullOrder;
+    fullOrder.splice(from, 1);
+    let targetIndex = fullOrder.indexOf(targetId);
+    if (from < targetFrom) targetIndex += 1;
+    fullOrder.splice(targetIndex, 0, dragId);
+    return fullOrder;
+  }
 
   const hostOf = (url) => {
     try { return new URL(url).host.replace(/^www\./, ""); } catch { return url; }
@@ -229,7 +263,8 @@
       const errorDetails = Array.isArray(m.vc_error_details) ? m.vc_error_details : [];
       const details = errorDetails.map((item) => {
         const state = item.state ? String(item.state).toUpperCase() : "ERROR";
-        return `${item.name || "Unknown project"} · ${state} · ${formatDate(item.created, "date unknown")}`;
+        const target = item.target ? String(item.target).toLowerCase() : "unknown target";
+        return `${item.name || "Unknown project"} · ${target} · ${state} · ${formatDate(item.created, "date unknown")}`;
       }).join(", ");
       const sampleSize = Number(m.vc_deployments) || 0;
       alerts.push({
@@ -321,12 +356,13 @@
 
   function quickCard(link) {
     const name = link.icon && link.icon !== "link" ? link.icon : "link";
+    const url = safeHttpUrl(link.url);
     return `
-      <a class="card card-hover quick" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" data-pinned="${link.pinned ? "true" : "false"}">
+      <a class="card card-hover quick" href="${esc(url || "#")}" target="_blank" rel="noopener noreferrer" data-pinned="${link.pinned ? "true" : "false"}">
         <span class="ico-wrap">${icon(name)}</span>
         <span class="quick-body">
           <span class="quick-name">${esc(link.name)}</span>
-          <span class="quick-desc">${esc(link.description || hostOf(link.url))}</span>
+          <span class="quick-desc">${esc(link.description || hostOf(url))}</span>
         </span>
         ${icon("pin", "ico pin-mark")}
       </a>`;
@@ -334,11 +370,12 @@
 
   function linkCard(link) {
     const iconName = link.icon && link.icon !== "link" ? link.icon : "link";
+    const url = safeHttpUrl(link.url);
     return `
       <div class="card card-hover link" draggable="true" data-id="${esc(link.id)}" data-pinned="${link.pinned ? "true" : "false"}">
         <span class="drag-handle" title="Drag to reorder">${icon("grip-vertical")}</span>
         <span class="ico-wrap" style="display:grid;place-items:center;width:28px;height:28px;flex:none;border-radius:7px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)">${icon(iconName)}</span>
-        <div class="link-main" data-action="open" data-id="${esc(link.id)}" role="link" tabindex="0" title="${esc(link.url)}">
+        <div class="link-main" data-action="open" data-id="${esc(link.id)}" role="link" tabindex="0" title="${esc(url)}">
           <div class="link-name">${icon(iconName)}<span>${esc(link.name)}</span></div>
           ${link.description ? `<div class="link-desc">${esc(link.description)}</div>` : ""}
           <div class="link-url">${esc(link.url)}</div>
@@ -436,10 +473,12 @@
     const rows = projects.map((p) => {
       const tone = p.state === "READY" ? "ok" : p.state === "ERROR" ? "danger" : p.state ? "warn" : "muted";
       const updated = formatDate(p.updatedAt);
+      const url = safeHttpUrl(p.url);
+      const repoUrl = safeHttpUrl(p.repoUrl);
       return `<tr>
         <td><span class="proj-name">${esc(p.name)}</span><span class="sub">${esc(p.provider || "Vercel")}${p.protected ? " · protected" : ""}</span></td>
-        <td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(p.url))}</a>` : `<span class="sub">no domain</span>`}</td>
-        <td>${p.repoUrl ? `<a href="${esc(p.repoUrl)}" target="_blank" rel="noopener noreferrer">${esc(p.repo || "")}</a>` : `<span class="sub">not linked</span>`}</td>
+        <td>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(url))}</a>` : `<span class="sub">no domain</span>`}</td>
+        <td>${repoUrl ? `<a href="${esc(repoUrl)}" target="_blank" rel="noopener noreferrer">${esc(p.repo || "")}</a>` : `<span class="sub">not linked</span>`}</td>
         <td><span class="badge" data-tone="${tone}"><span class="dot"></span>${esc(p.state || "UNKNOWN")}</span></td>
         <td class="sub">${esc(updated)}</td>
       </tr>`;
@@ -672,7 +711,11 @@
       const target = e.target.closest("[data-action], [data-category], [data-layout]");
       if (!target) {
         const open = e.target.closest('.link-main[data-action="open"]');
-        if (open) window.open(open.dataset.id ? (state.links.find((l) => l.id === open.dataset.id) || {}).url : "", "_blank", "noopener");
+        if (open) {
+          const link = state.links.find((item) => item.id === open.dataset.id);
+          const url = link ? safeHttpUrl(link.url) : "";
+          if (url) window.open(url, "_blank", "noopener");
+        }
         return;
       }
       if (target.dataset.category) {
@@ -693,7 +736,8 @@
       if (action === "theme") return toggleTheme();
       if (action === "open") {
         const opened = state.links.find((l) => l.id === target.dataset.id);
-        if (opened) window.open(opened.url, "_blank", "noopener");
+        const url = opened ? safeHttpUrl(opened.url) : "";
+        if (url) window.open(url, "_blank", "noopener");
         return;
       }
 
@@ -739,7 +783,8 @@
       if (main && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
         const link = state.links.find((l) => l.id === main.dataset.id);
-        if (link) window.open(link.url, "_blank", "noopener");
+        const url = link ? safeHttpUrl(link.url) : "";
+        if (url) window.open(url, "_blank", "noopener");
       }
     });
 
@@ -791,14 +836,7 @@
 
       // Move only the dragged link in the complete global order. This keeps
       // links hidden by the current search/category in their original places.
-      const fullOrder = state.links.map((l) => l.id);
-      const from = fullOrder.indexOf(dragId);
-      const targetFrom = fullOrder.indexOf(targetId);
-      if (from === -1 || targetFrom === -1) return;
-      fullOrder.splice(from, 1);
-      let targetIndex = fullOrder.indexOf(targetId);
-      if (from < targetFrom) targetIndex += 1;
-      fullOrder.splice(targetIndex, 0, dragId);
+      const fullOrder = reorderIds(state.links.map((l) => l.id), dragId, targetId);
       dragId = null;
 
       const byId = new Map(state.links.map((l) => [l.id, l]));

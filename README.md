@@ -16,8 +16,9 @@ app/static/              index.html, app.css, app.js, vendored Inter + Lucide
 hub/hub.py               aggregation API (Cloudflare, GitHub, Vercel, Coolify,
                          Resend, UpCloud, Docker, project inventory)
 hub/vps-agent.sh         writes vps.json every minute from the host
+nginx.conf               static-download container configuration
 config/                  legacy Homepage config (kept for the fallback host)
-tests/                   Python regression tests for hub and URL validation
+tests/                   Python and JavaScript regression tests
 WORKSTATION.md           operations, rollback, verification
 ```
 
@@ -87,6 +88,7 @@ Run the local regression checks before deployment:
 ```bash
 python -m unittest discover -s tests -v
 node --check app/static/app.js
+node tests/test_frontend.js
 python -m py_compile app/server.py hub/hub.py
 ```
 
@@ -100,6 +102,7 @@ python -m py_compile app/server.py hub/hub.py
 | `GITHUB_ACCOUNTS` | none | comma-separated logins used for public counts |
 | `VERCEL_TOKEN` | read-only REST access | project and deployment counts |
 | `RESEND_API_KEY` | read-only REST access | domain and delivery-event counts |
+| `ALERT_KEY` | webhook secret | required for `/alert`; the endpoint fails closed without it |
 | `INVENTORY_REPO` | GitHub repository | defaults to `merqatodigital/projects` |
 | `CACHE_TTL` | none | seconds, default 60 |
 | `PROBE_TIMEOUT` | none | HTTPS probe timeout in seconds, default 20 |
@@ -115,6 +118,9 @@ available: `/domains.json`, `/cloudflare.json`, `/docker.json`, `/github.json`,
 
 - `dockerproxy` exposes only `CONTAINERS`, `VERSION`, and `INFO`. `EXEC=0` and
   `POST=0` mean a compromised dashboard cannot start a container.
+- The `/alert` webhook requires `ALERT_KEY` and fails closed when it is absent.
+- Host ports 3004/3005/3010 must stay off the public firewall; Caddy and its
+  edge authentication are the public boundary.
 - The hub never returns a token, only counts and normalized rows derived from one.
 - Automation uses a dedicated key-only account with a narrow sudo allowlist and
   an audit log, never a shared root credential.

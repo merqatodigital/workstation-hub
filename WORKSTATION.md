@@ -6,18 +6,18 @@ Secondary: `https://work.merqato.digital` (Cloudflare Access SSO / email OTP)
 
 ## Access control
 
-Two doors into the same dashboard:
+Two entry points with different dashboard surfaces:
 
-| Host | Auth | Use it when |
-| --- | --- | --- |
-| `home.merqato.digital` | Caddy `basic_auth` (browser prompt) | daily use — one prompt, then cached for the session |
-| `work.merqato.digital` | Cloudflare Access, app `MerQato Workstation` | you want SSO / one-time PIN instead of a password |
+| Host | Surface | Auth | Use it when |
+| --- | --- | --- | --- |
+| `home.merqato.digital` | Workstation app | Caddy `basic_auth` (browser prompt) | daily use — one prompt, then cached for the session |
+| `work.merqato.digital` | legacy Homepage fallback | Cloudflare Access, app `MerQato Workstation` | you want SSO / one-time PIN instead of a password |
 
 Credentials for `home` live in `/opt/homepage/auth.txt` (chmod 600):
 
 ```
 user: david
-pass: <in /opt/homepage/auth.txt>
+bcrypt hash: <stored in /opt/homepage/auth.txt>
 ```
 
 The password prompt covers the whole origin, so Workstation and hub XHRs are
@@ -113,6 +113,21 @@ Coolify token abilities are `["read"]`; a `POST /api/v1/projects` returns 403.
 The token is scoped to team `0` (Root Team), which is where the projects and
 servers live — teams 1 and 2 are empty.
 
+The hub alert webhook requires `ALERT_KEY` and fails closed when the key is
+missing or incorrect. Keep `ALERT_KEY` in `/opt/homepage/.env` and never in the
+repository.
+
+## Exposure boundary
+
+Caddy terminates public traffic on ports 80/443. UFW permits only 22/80/443;
+direct connections to the host-published 3004, 3005, and 3010 ports timed out
+from outside the VPS on 20 Nov 2026. Keep those ports off the public firewall.
+
+The Workstation application's signed session is an additional CSRF/session
+layer, not a replacement for the edge Basic Auth boundary. Do not publish port
+3005 directly. Any firewall, Compose port-binding, or Caddy change requires
+owner approval and a rollback snapshot.
+
 VPS metrics are produced by `/opt/homepage/vps-agent.sh` every minute into
 `/opt/homepage/hub/vps.json` (root crontab). It reads the UpCloud metadata
 service, `/proc/meminfo`, `/proc/loadavg` and `df`. No API key required.
@@ -166,6 +181,7 @@ Every change is snapshotted in `/opt/homepage/backups/`:
 | `services.yaml.<stamp>` | dashboard tiles |
 | `settings.yaml.<stamp>` | layout |
 | `hub.py.<stamp>` | hub API logic |
+| `server.py.<stamp>` | Workstation API and link validation |
 | `app.js.<stamp>` | Workstation front end |
 | `docker-compose.yml.<stamp>` | container topology |
 | `kuma.db.<stamp>` | Uptime Kuma status page |

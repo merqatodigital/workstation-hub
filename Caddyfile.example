@@ -1,8 +1,9 @@
 # MerQato Workstation edge-routing example.
 #
-# The Workstation app and the legacy Homepage dashboard run on the same host.
-# Keep the password prompt on home.merqato.digital and leave Cloudflare Access
-# in front of work.merqato.digital.
+# This mirrors the live production topology as of 20 Nov 2026; it is a source
+# snapshot, not an instruction to change live routing. The Workstation app and
+# the legacy Homepage dashboard run on the same host. Keep the password prompt
+# on home.merqato.digital and leave Cloudflare Access in front of work.
 
 home.merqato.digital {
 	basic_auth {

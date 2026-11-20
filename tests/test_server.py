@@ -21,10 +21,35 @@ class UrlValidationTests(unittest.TestCase):
             "javascript:alert(1)",
             "https://user:password@example.com",
             "ftp://example.com",
+            "https://[bad",
+            "https://example.com/\njavascript:alert(1)",
         ):
             cleaned, error = server.clean_url(value)
             self.assertIsNone(cleaned)
             self.assertTrue(error)
+
+
+class IconValidationTests(unittest.TestCase):
+    def test_accepts_lucide_style_names(self):
+        for value in ("folder-git-2", "cloud_cog", "triangle"):
+            cleaned, error = server.clean_icon(value)
+            self.assertIsNone(error)
+            self.assertEqual(cleaned, value)
+
+    def test_rejects_non_text_or_dangerous_icon_values(self):
+        for value in ({"name": "triangle"}, ["triangle"], "has space", "__proto__"):
+            cleaned, error = server.clean_icon(value)
+            self.assertIsNone(cleaned)
+            self.assertTrue(error)
+
+    def test_import_validation_normalizes_missing_icons(self):
+        fields, error = server.validate({
+            "name": "Example",
+            "url": "https://example.com",
+            "category": "Other",
+        })
+        self.assertIsNone(error)
+        self.assertEqual(fields["icon"], "link")
 
 
 if __name__ == "__main__":

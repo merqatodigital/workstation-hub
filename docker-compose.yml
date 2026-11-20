@@ -39,7 +39,7 @@ services:
       - /opt/homepage/hub:/app:ro
     environment:
       CF_API_TOKEN: ${CF_API_TOKEN}
-      GITHUB_ACCOUNTS: ${GITHUB_ACCOUNTS}
+      GITHUB_ACCOUNTS: ${GITHUB_ACCOUNTS:-merqatodigital,sanvicpalawan,merqato}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       INVENTORY_REPO: ${INVENTORY_REPO:-merqatodigital/projects}
       VERCEL_TOKEN: ${VERCEL_TOKEN}
@@ -47,7 +47,7 @@ services:
       ALERT_KEY: ${ALERT_KEY}
       ALERT_TO: ${ALERT_TO}
       ALERT_FROM: ${ALERT_FROM}
-      CACHE_TTL: ${CACHE_TTL}
+      CACHE_TTL: ${CACHE_TTL:-60}
       PROBE_TIMEOUT: ${PROBE_TIMEOUT:-20}
       FIRST_BUILD_WAIT: ${FIRST_BUILD_WAIT:-25}
       DOCKER_API: http://dockerproxy:2375

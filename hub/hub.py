@@ -15,17 +15,35 @@ import ssl
 import threading
 import time
 import base64
+import hmac
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
-PORT = int(os.environ.get("HUB_PORT", "3010"))
+
+def env_int(name, default):
+    """Read a positive integer environment value without failing on blanks."""
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+PORT = env_int("HUB_PORT", 3010)
 BUILD_ID = os.environ.get("HUB_BUILD", "2026.11.19")
 CF_TOKEN = os.environ.get("CF_API_TOKEN", "").strip()
 DOCKER = os.environ.get("DOCKER_API", "http://dockerproxy:2375")
-GITHUB_ACCOUNTS = [a.strip() for a in os.environ.get("GITHUB_ACCOUNTS", "merqatodigital,sanvicpalawan,merqato").split(",") if a.strip()]
-CACHE_TTL = int(os.environ.get("CACHE_TTL", "60"))
+_default_accounts = "merqatodigital,sanvicpalawan,merqato"
+GITHUB_ACCOUNTS = [
+    account.strip()
+    for account in (os.environ.get("GITHUB_ACCOUNTS", "").strip() or _default_accounts).split(",")
+    if account.strip()
+]
+CACHE_TTL = env_int("CACHE_TTL", 60)
 VPS_FILE = os.environ.get("VPS_FILE", "/app/vps.json")
 COOLIFY_URL = os.environ.get("COOLIFY_URL", "https://coolify.merqato.digital").rstrip("/")
 COOLIFY_TOKEN = os.environ.get("COOLIFY_TOKEN", "").strip()
@@ -48,6 +66,39 @@ def http_text(url, headers=None, timeout=8):
     req = urllib.request.Request(url, headers=headers or {"User-Agent": "merqato-hub/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode(errors="replace").strip()
+
+
+def safe_http_url(value):
+    """Return an absolute HTTP(S) URL, or an empty string when unsafe."""
+    if not isinstance(value, str):
+        return ""
+    candidate = value.strip()
+    if not candidate or len(candidate) > 2048:
+        return ""
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in candidate):
+        return ""
+    try:
+        parsed = urlparse(candidate)
+        parsed.port  # reject malformed ports
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() not in ("http", "https"):
+        return ""
+    if not parsed.hostname or parsed.username or parsed.password:
+        return ""
+    return candidate
+
+
+def safe_domain_url(value):
+    """Turn a bare inventory hostname into a safe HTTPS URL."""
+    if not isinstance(value, str):
+        return ""
+    candidate = value.strip()
+    if not candidate or any(char.isspace() for char in candidate):
+        return ""
+    if "/" in candidate or "@" in candidate or "://" in candidate:
+        return ""
+    return safe_http_url("https://" + candidate)
 
 
 # ---------------------------------------------------------------- cloudflare
@@ -83,7 +134,7 @@ def cloudflare_data():
 
 
 # ------------------------------------------------------------------- probes
-PROBE_TIMEOUT = int(os.environ.get("PROBE_TIMEOUT", "20"))
+PROBE_TIMEOUT = env_int("PROBE_TIMEOUT", 20)
 
 
 def probe(host):
@@ -295,6 +346,13 @@ def resend_data():
     return out
 
 
+def alert_key_matches(provided, expected):
+    """Fail closed when no webhook key is configured."""
+    if not expected:
+        return False
+    return hmac.compare_digest(str(provided or ""), str(expected))
+
+
 def send_alert(monitor, status, message):
     """Email an outage/recovery notice through Resend."""
     if not RESEND_TOKEN:
@@ -330,8 +388,8 @@ def send_alert(monitor, status, message):
 def vercel_data():
     """Projects, deployments and health from the Vercel REST API (read-only)."""
     out = {"ok": False, "error": None, "team": None, "projects": 0,
-           "deployments": 0, "ready": 0, "errors": 0, "error_details": [],
-           "latest": []}
+           "deployments": 0, "ready": 0, "errors": 0, "canceled": 0,
+           "error_details": [], "latest": []}
     if not VERCEL_TOKEN:
         out["error"] = "no token"
         return out
@@ -355,13 +413,16 @@ def vercel_data():
             state = (d.get("state") or d.get("readyState") or "").upper()
             if state in ("READY", "FINISHED"):
                 out["ready"] += 1
-            elif state in ("ERROR", "CANCELED"):
+            elif state == "ERROR":
                 out["errors"] += 1
                 out["error_details"].append({
                     "name": d.get("name"),
                     "state": state,
+                    "target": d.get("target"),
                     "created": d.get("createdAt"),
                 })
+            elif state == "CANCELED":
+                out["canceled"] += 1
             if d.get("target") == "production":
                 out["latest"].append({
                     "name": d.get("name"),
@@ -412,23 +473,56 @@ def inventory_data():
 
 
 def normalize_projects(items):
-    """Flatten the inventory snapshot into rows the dashboard can render."""
+    """Flatten inventory rows into safe, renderable project records."""
     rows = []
-    for p in items[:200]:
-        domains = p.get("domains") or []
-        url = p.get("deploymentURL") or ""
-        if not url and domains:
-            url = "https://" + domains[0]
-        rows.append({
-            "name": p.get("project") or "untitled",
-            "url": url,
-            "repo": p.get("repo"),
-            "repoUrl": p.get("repoURL"),
-            "provider": "Vercel" if p.get("vercelTeam") else None,
-            "state": (p.get("state") or "").upper() or None,
-            "updatedAt": p.get("updatedAt"),
-            "protected": bool(p.get("protected")),
-        })
+    if not isinstance(items, list):
+        return rows
+    for item in items[:200]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            domains = item.get("domains") or []
+            if not isinstance(domains, list):
+                domains = []
+            url = ""
+            for domain in domains:
+                url = safe_domain_url(domain)
+                if url:
+                    break
+            deployment_raw = item.get("deploymentURL")
+            deployment_url = safe_http_url(deployment_raw)
+            if deployment_raw and not deployment_url:
+                continue
+            if not url:
+                url = deployment_url
+
+            repo_raw = item.get("repoURL")
+            repo_url = safe_http_url(repo_raw)
+            if repo_raw and not repo_url:
+                continue
+
+            name = item.get("project")
+            if not isinstance(name, str) or not name.strip():
+                name = "untitled"
+            repo = item.get("repo")
+            if not isinstance(repo, str):
+                repo = None
+            state = item.get("state")
+            if not isinstance(state, str):
+                state = ""
+            rows.append({
+                "name": name.strip()[:120],
+                "url": url,
+                "repo": repo,
+                "repoUrl": repo_url,
+                "provider": "Vercel" if item.get("vercelTeam") else None,
+                "state": state.strip().upper() or None,
+                "updatedAt": item.get("updatedAt"),
+                "protected": bool(item.get("protected")),
+            })
+        except Exception:  # noqa: BLE001
+            # One malformed inventory row must not discard all valid projects.
+            continue
     rows.sort(key=lambda r: (r["state"] != "ERROR", r["name"].lower()))
     return rows
 
@@ -621,6 +715,7 @@ class Handler(BaseHTTPRequestHandler):
                     "vc_deployments": data["vercel"].get("deployments", 0),
                     "vc_ready": data["vercel"].get("ready", 0),
                     "vc_errors": data["vercel"].get("errors", 0),
+                    "vc_canceled": data["vercel"].get("canceled", 0),
                     "vc_error_details": data["vercel"].get("error_details", []),
                     "rs_domains": data["resend"].get("domains", 0),
                     "rs_verified": data["resend"].get("verified", 0),
@@ -663,7 +758,7 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length).decode("utf-8", "replace") if length else "{}"
             if path == "/alert":
-                if ALERT_KEY and self.headers.get("X-Hub-Key") != ALERT_KEY:
+                if not alert_key_matches(self.headers.get("X-Hub-Key"), ALERT_KEY):
                     self._send({"error": "forbidden"}, 403)
                     return
                 try:

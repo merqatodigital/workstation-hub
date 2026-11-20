@@ -115,6 +115,7 @@ def save_links(links):
 
 # ------------------------------------------------------------------ validation
 URL_RE = re.compile(r"^https?://[^\s/$.?#].[^\s]*$", re.IGNORECASE)
+ICON_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$", re.IGNORECASE)
 
 
 def clean_url(raw):
@@ -125,7 +126,12 @@ def clean_url(raw):
         return None, "URL is required"
     if len(url) > 2048:
         return None, "URL is too long"
-    parsed = urlparse(url)
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url):
+        return None, "URL does not look valid"
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None, "URL does not look valid"
     if parsed.scheme.lower() not in ("http", "https"):
         return None, "Only http and https links are allowed"
     if not parsed.netloc or parsed.username or parsed.password:
@@ -133,6 +139,20 @@ def clean_url(raw):
     if not URL_RE.match(url):
         return None, "URL does not look valid"
     return url, None
+
+
+def clean_icon(raw):
+    """Normalize a Lucide-style icon name without accepting arbitrary data."""
+    if raw is None or raw == "":
+        return "link", None
+    if not isinstance(raw, str):
+        return None, "Icon must be text"
+    value = raw.strip().lower()
+    if not value:
+        return "link", None
+    if not ICON_RE.match(value):
+        return None, "Icon contains unsupported characters"
+    return value, None
 
 
 def clean_text(value, field, limit, required=False):
@@ -165,6 +185,12 @@ def validate(payload, partial=False):
         if err:
             return None, err
         fields["url"] = url
+
+    if not partial or "icon" in payload:
+        icon, err = clean_icon(payload.get("icon"))
+        if err:
+            return None, err
+        fields["icon"] = icon
 
     if not partial or "category" in payload:
         cat, err = clean_text(payload.get("category"), "Category", 40, required=True)
@@ -394,7 +420,7 @@ class Handler(BaseHTTPRequestHandler):
                 "category": fields["category"],
                 "description": fields.get("description", ""),
                 "pinned": fields.get("pinned", False),
-                "icon": (payload.get("icon") or "link")[:40],
+                "icon": fields.get("icon", "link"),
                 "createdAt": int(time.time()),
                 "order": order,
             }
@@ -437,7 +463,7 @@ class Handler(BaseHTTPRequestHandler):
                     "category": fields["category"],
                     "description": fields.get("description", ""),
                     "pinned": fields.get("pinned", False),
-                    "icon": (item.get("icon") or "link")[:40],
+                    "icon": fields.get("icon", "link"),
                     "createdAt": int(time.time()),
                     "order": len(links),
                 })
