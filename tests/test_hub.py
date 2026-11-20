@@ -1,7 +1,11 @@
 import importlib.util
+import json
 import os
 import pathlib
+import threading
 import unittest
+import urllib.error
+import urllib.request
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -99,11 +103,92 @@ class GitHubIntegrationTests(unittest.TestCase):
         self.assertEqual(public_call.kwargs["headers"]["Authorization"], "Bearer test-token")
 
 
+class VercelIntegrationTests(unittest.TestCase):
+    def test_ready_error_and_canceled_states_are_distinct(self):
+        def fake_json(url, **_kwargs):
+            if "/v2/teams" in url:
+                return {"teams": [{"slug": "example-team"}]}
+            if "/v9/projects" in url:
+                return {"projects": [{"name": "example-project"}]}
+            return {"deployments": [
+                {"name": "ready", "state": "READY", "target": "production", "createdAt": 1},
+                {"name": "failed", "state": "ERROR", "target": "production", "createdAt": 2},
+                {"name": "canceled", "state": "CANCELED", "target": "preview", "createdAt": 3},
+            ]}
+
+        with mock.patch.object(hub, "VERCEL_TOKEN", "test-token"), \
+                mock.patch.object(hub, "http_json", side_effect=fake_json):
+            data = hub.vercel_data()
+
+        self.assertEqual(data["ready"], 1)
+        self.assertEqual(data["errors"], 1)
+        self.assertEqual(data["canceled"], 1)
+        self.assertEqual(data["error_details"], [{
+            "name": "failed",
+            "state": "ERROR",
+            "target": "production",
+            "created": 2,
+        }])
+        summary = hub.vercel_summary(data)
+        self.assertEqual(summary["vc_errors"], 1)
+        self.assertEqual(summary["vc_canceled"], 1)
+
+
+class AlertEndpointTests(unittest.TestCase):
+    def test_http_endpoint_requires_the_exact_key_header(self):
+        server = hub.ThreadingHTTPServer(("127.0.0.1", 0), hub.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = "http://127.0.0.1:%d/alert" % server.server_port
+        payload = json.dumps({"monitor": {"name": "test"}}).encode()
+
+        def post(headers):
+            request = urllib.request.Request(
+                url,
+                data=payload,
+                headers=headers,
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    return response.status, json.load(response)
+            except urllib.error.HTTPError as exc:
+                body = exc.read()
+                exc.close()
+                return exc.code, json.loads(body)
+
+        try:
+            with mock.patch.object(hub, "ALERT_KEY", "right-key"), \
+                    mock.patch.object(hub, "send_alert", return_value=(True, "ok")) as sender:
+                missing_status, missing_body = post({"Content-Type": "application/json"})
+                wrong_status, wrong_body = post({
+                    "Content-Type": "application/json",
+                    "X-Hub-Key": "wrong-key",
+                })
+                correct_status, correct_body = post({
+                    "Content-Type": "application/json",
+                    "X-Hub-Key": "right-key",
+                })
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertEqual(missing_status, 403)
+        self.assertEqual(missing_body["error"], "forbidden")
+        self.assertEqual(wrong_status, 403)
+        self.assertEqual(wrong_body["error"], "forbidden")
+        self.assertEqual(correct_status, 200)
+        self.assertTrue(correct_body["ok"])
+        sender.assert_called_once()
+
+
 class SecurityAndEnvironmentTests(unittest.TestCase):
     def test_alert_webhook_fails_closed_without_a_key(self):
         self.assertFalse(hub.alert_key_matches("anything", ""))
         self.assertFalse(hub.alert_key_matches("", ""))
         self.assertFalse(hub.alert_key_matches("wrong", "right"))
+        self.assertFalse(hub.alert_key_matches("é", "right"))
         self.assertTrue(hub.alert_key_matches("right", "right"))
 
     def test_integer_environment_values_use_safe_defaults(self):

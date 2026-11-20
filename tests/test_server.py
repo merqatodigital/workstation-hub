@@ -23,6 +23,9 @@ class UrlValidationTests(unittest.TestCase):
             "ftp://example.com",
             "https://[bad",
             "https://example.com/\njavascript:alert(1)",
+            "https://example.com:bad",
+            "https://example.com:99999",
+            "https://:80",
         ):
             cleaned, error = server.clean_url(value)
             self.assertIsNone(cleaned)

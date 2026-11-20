@@ -361,7 +361,9 @@ def alert_key_matches(provided, expected):
     """Fail closed when no webhook key is configured."""
     if not expected:
         return False
-    return hmac.compare_digest(str(provided or ""), str(expected))
+    provided_bytes = str(provided or "").encode("utf-8")
+    expected_bytes = str(expected).encode("utf-8")
+    return hmac.compare_digest(provided_bytes, expected_bytes)
 
 
 def send_alert(monitor, status, message):
@@ -446,6 +448,19 @@ def vercel_data():
     except Exception as exc:  # noqa: BLE001
         out["error"] = str(exc)[:120]
     return out
+
+
+def vercel_summary(data):
+    """Stable summary fields for the Vercel API contract."""
+    return {
+        "vc_team": data.get("team") or "n/a",
+        "vc_projects": data.get("projects", 0),
+        "vc_deployments": data.get("deployments", 0),
+        "vc_ready": data.get("ready", 0),
+        "vc_errors": data.get("errors", 0),
+        "vc_canceled": data.get("canceled", 0),
+        "vc_error_details": data.get("error_details", []),
+    }
 
 
 # ----------------------------------------------------------------- inventory
@@ -721,13 +736,7 @@ class Handler(BaseHTTPRequestHandler):
                     "inv_vercel_projects": data["inventory"].get("vercel_projects", 0),
                     "inv_deploy_errors": data["inventory"].get("deployment_errors", 0),
                     "inv_captured": data["inventory"].get("captured") or "n/a",
-                    "vc_team": data["vercel"].get("team") or "n/a",
-                    "vc_projects": data["vercel"].get("projects", 0),
-                    "vc_deployments": data["vercel"].get("deployments", 0),
-                    "vc_ready": data["vercel"].get("ready", 0),
-                    "vc_errors": data["vercel"].get("errors", 0),
-                    "vc_canceled": data["vercel"].get("canceled", 0),
-                    "vc_error_details": data["vercel"].get("error_details", []),
+                    **vercel_summary(data["vercel"]),
                     "rs_domains": data["resend"].get("domains", 0),
                     "rs_verified": data["resend"].get("verified", 0),
                     "rs_delivered": data["resend"].get("delivered", 0),
@@ -766,26 +775,38 @@ class Handler(BaseHTTPRequestHandler):
         """Alert sink for Uptime Kuma's webhook notification."""
         path = self.path.split("?")[0].rstrip("/") or "/"
         try:
-            length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length).decode("utf-8", "replace") if length else "{}"
-            if path == "/alert":
-                if not alert_key_matches(self.headers.get("X-Hub-Key"), ALERT_KEY):
-                    self._send({"error": "forbidden"}, 403)
-                    return
-                try:
-                    data = json.loads(raw)
-                except Exception:  # noqa: BLE001
-                    data = {}
-                monitor = ((data.get("monitor") or {}).get("name")
-                           or data.get("name") or "unknown")
-                hb = data.get("heartbeat") or {}
-                status = hb.get("status", data.get("status", "down"))
-                msg = data.get("msg") or hb.get("msg") or ""
-                ok, info = send_alert(monitor, status, msg)
-                self._send({"ok": ok, "monitor": monitor, "detail": info},
-                           200 if ok else 502)
+            if path != "/alert":
+                self._send({"error": "not found"}, 404)
                 return
-            self._send({"error": "not found"}, 404)
+
+            # Authenticate before reading any request body so an unauthenticated
+            # caller cannot tie up a worker or force an oversized allocation.
+            if not alert_key_matches(self.headers.get("X-Hub-Key"), ALERT_KEY):
+                self._send({"error": "forbidden"}, 403)
+                return
+
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                self._send({"error": "invalid content length"}, 400)
+                return
+            if length < 0 or length > 65536:
+                self._send({"error": "body too large"}, 413)
+                return
+
+            raw = self.rfile.read(length).decode("utf-8", "replace") if length else "{}"
+            try:
+                data = json.loads(raw)
+            except Exception:  # noqa: BLE001
+                data = {}
+            monitor = ((data.get("monitor") or {}).get("name")
+                       or data.get("name") or "unknown")
+            hb = data.get("heartbeat") or {}
+            status = hb.get("status", data.get("status", "down"))
+            msg = data.get("msg") or hb.get("msg") or ""
+            ok, info = send_alert(monitor, status, msg)
+            self._send({"ok": ok, "monitor": monitor, "detail": info},
+                       200 if ok else 502)
         except Exception as exc:  # noqa: BLE001
             self._send({"error": str(exc)[:160]}, 500)
 

@@ -115,7 +115,10 @@ servers live — teams 1 and 2 are empty.
 
 The hub alert webhook requires `ALERT_KEY` and fails closed when the key is
 missing or incorrect. Keep `ALERT_KEY` in `/opt/homepage/.env` and never in the
-repository.
+repository. Configure the Uptime Kuma webhook URL as
+`https://home.merqato.digital/hub/alert` and add the custom request header
+`X-Hub-Key` with the same value as `ALERT_KEY`. A missing or incorrect header
+returns 403 before the request body is read.
 
 ## Exposure boundary
 

@@ -130,11 +130,13 @@ def clean_url(raw):
         return None, "URL does not look valid"
     try:
         parsed = urlparse(url)
+        hostname = parsed.hostname
+        parsed.port  # reject malformed and out-of-range ports
     except ValueError:
         return None, "URL does not look valid"
     if parsed.scheme.lower() not in ("http", "https"):
         return None, "Only http and https links are allowed"
-    if not parsed.netloc or parsed.username or parsed.password:
+    if not parsed.netloc or not hostname or parsed.username or parsed.password:
         return None, "URL must be a plain http(s) address without credentials"
     if not URL_RE.match(url):
         return None, "URL does not look valid"

@@ -102,7 +102,7 @@ python -m py_compile app/server.py hub/hub.py
 | `GITHUB_ACCOUNTS` | none | comma-separated logins used for public counts |
 | `VERCEL_TOKEN` | read-only REST access | project and deployment counts |
 | `RESEND_API_KEY` | read-only REST access | domain and delivery-event counts |
-| `ALERT_KEY` | webhook secret | required for `/alert`; the endpoint fails closed without it |
+| `ALERT_KEY` | webhook secret | required for `/alert`; the sender must include `X-Hub-Key` with this value |
 | `INVENTORY_REPO` | GitHub repository | defaults to `merqatodigital/projects` |
 | `CACHE_TTL` | none | seconds, default 60 |
 | `PROBE_TIMEOUT` | none | HTTPS probe timeout in seconds, default 20 |
@@ -119,6 +119,8 @@ available: `/domains.json`, `/cloudflare.json`, `/docker.json`, `/github.json`,
 - `dockerproxy` exposes only `CONTAINERS`, `VERSION`, and `INFO`. `EXEC=0` and
   `POST=0` mean a compromised dashboard cannot start a container.
 - The `/alert` webhook requires `ALERT_KEY` and fails closed when it is absent.
+  Configure the Uptime Kuma webhook to send the same value in the `X-Hub-Key`
+  header; a missing or incorrect header returns 403 before the body is read.
 - Host ports 3004/3005/3010 must stay off the public firewall; Caddy and its
   edge authentication are the public boundary.
 - The hub never returns a token, only counts and normalized rows derived from one.
